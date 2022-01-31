@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using ESkMeansLib.Helpers;
 using ESkMeansLib.Model;
 using ESkMeansLib.Tests.datasets;
+using ESkMeansLib.Tests.Model;
 
 namespace ESkMeansLib.Tests
 {
@@ -109,14 +110,17 @@ namespace ESkMeansLib.Tests
         [TestMethod()]
         public void EnsureUnitVectorsTest()
         {
-            Assert.Fail();
+            var set = FlexibleVectorTests.CreateRandomVectors(1000, true);
+            Parallel.For(0, 10, i =>
+            {
+                KMeans.EnsureUnitVectors(set);
+            });
+            foreach (var v in set)
+            {
+                Assert.IsTrue(v.IsUnitVector);
+            }
         }
-
-        [TestMethod()]
-        public void GetClusteringTest()
-        {
-            Assert.Fail();
-        }
+        
 
     }
 }

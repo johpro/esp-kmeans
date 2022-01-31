@@ -55,22 +55,22 @@ namespace ESkMeansLib.Tests.Model
             Assert.AreEqual(0, empty3[10]);
             Assert.AreEqual(0, empty4[10]);
 
-            Assert.AreEqual(false, empty1.TrySetValue(0, 1f));
-            Assert.AreEqual(false, empty2.TrySetValue(0, 1f));
-            Assert.AreEqual(false, empty3.TrySetValue(0, 1f));
-            Assert.AreEqual(false, empty4.TrySetValue(0, 1f));
+            Assert.IsFalse(empty1.TrySetValue(0, 1f));
+            Assert.IsFalse(empty2.TrySetValue(0, 1f));
+            Assert.IsFalse(empty3.TrySetValue(0, 1f));
+            Assert.IsFalse(empty4.TrySetValue(0, 1f));
 
             Assert.AreEqual(0, empty1.AsEnumerable().Count());
             Assert.AreEqual(0, empty2.AsEnumerable().Count());
             Assert.AreEqual(0, empty3.AsEnumerable().Count());
             Assert.AreEqual(0, empty4.AsEnumerable().Count());
 
-            Assert.AreEqual(true, empty1.ValueEquals(empty1));
-            Assert.AreEqual(true, empty2.ValueEquals(empty2));
-            Assert.AreEqual(true, empty3.ValueEquals(empty3));
-            Assert.AreEqual(true, empty4.ValueEquals(empty4));
-            Assert.AreEqual(true, empty1.ValueEquals(empty4));
-            Assert.AreEqual(true, empty4.ValueEquals(empty1));
+            Assert.IsTrue(empty1.ValueEquals(empty1));
+            Assert.IsTrue(empty2.ValueEquals(empty2));
+            Assert.IsTrue(empty3.ValueEquals(empty3));
+            Assert.IsTrue(empty4.ValueEquals(empty4));
+            Assert.IsTrue(empty1.ValueEquals(empty4));
+            Assert.IsTrue(empty4.ValueEquals(empty1));
 
 
 
@@ -111,15 +111,15 @@ namespace ESkMeansLib.Tests.Model
             Assert.AreEqual(0, one4[1]);
 
 
-            Assert.AreEqual(true, one1.TrySetValue(0, -1f));
-            Assert.AreEqual(true, one2.TrySetValue(0, -1f));
-            Assert.AreEqual(true, one3.TrySetValue(0, -1f));
-            Assert.AreEqual(true, one4.TrySetValue(0, -1f));
+            Assert.IsTrue(one1.TrySetValue(0, -1f));
+            Assert.IsTrue(one2.TrySetValue(0, -1f));
+            Assert.IsTrue(one3.TrySetValue(0, -1f));
+            Assert.IsTrue(one4.TrySetValue(0, -1f));
 
-            Assert.AreEqual(false, one1.TrySetValue(1, 1f));
-            Assert.AreEqual(false, one2.TrySetValue(1, 1f));
-            Assert.AreEqual(false, one3.TrySetValue(1, 1f));
-            Assert.AreEqual(false, one4.TrySetValue(1, 1f));
+            Assert.IsFalse(one1.TrySetValue(1, 1f));
+            Assert.IsFalse(one2.TrySetValue(1, 1f));
+            Assert.IsFalse(one3.TrySetValue(1, 1f));
+            Assert.IsFalse(one4.TrySetValue(1, 1f));
 
 
             Assert.AreEqual(-1f, one1[0], float.Epsilon);
@@ -128,12 +128,12 @@ namespace ESkMeansLib.Tests.Model
             Assert.AreEqual(-1f, one4[0], float.Epsilon);
 
 
-            Assert.AreEqual(true, one1.ValueEquals(one1));
-            Assert.AreEqual(true, one2.ValueEquals(one2));
-            Assert.AreEqual(true, one3.ValueEquals(one3));
-            Assert.AreEqual(true, one4.ValueEquals(one4));
-            Assert.AreEqual(true, one1.ValueEquals(one4));
-            Assert.AreEqual(true, one4.ValueEquals(one1));
+            Assert.IsTrue(one1.ValueEquals(one1));
+            Assert.IsTrue(one2.ValueEquals(one2));
+            Assert.IsTrue(one3.ValueEquals(one3));
+            Assert.IsTrue(one4.ValueEquals(one4));
+            Assert.IsTrue(one1.ValueEquals(one4));
+            Assert.IsTrue(one4.ValueEquals(one1));
 
 
 
@@ -150,9 +150,9 @@ namespace ESkMeansLib.Tests.Model
             Assert.AreEqual(arr.Length, v2.Length);
             Assert.AreEqual(arr.Length, v3.Length);
 
-            Assert.AreEqual(false, v1.IsSparse);
-            Assert.AreEqual(true, v2.IsSparse);
-            Assert.AreEqual(true, v3.IsSparse);
+            Assert.IsFalse(v1.IsSparse);
+            Assert.IsTrue(v2.IsSparse);
+            Assert.IsTrue(v3.IsSparse);
 
 
             for (int i = 0; i < arr.Length; i++)
@@ -180,19 +180,19 @@ namespace ESkMeansLib.Tests.Model
                 Assert.AreEqual(arr[i], v3[i], float.Epsilon);
             }
 
-            Assert.AreEqual(true, v1.ValueEquals(v2));
-            Assert.AreEqual(true, v1.ValueEquals(v3));
-            Assert.AreEqual(true, v2.ValueEquals(v1));
-            Assert.AreEqual(true, v3.ValueEquals(v1));
+            Assert.IsTrue(v1.ValueEquals(v2));
+            Assert.IsTrue(v1.ValueEquals(v3));
+            Assert.IsTrue(v2.ValueEquals(v1));
+            Assert.IsTrue(v3.ValueEquals(v1));
 
             v1 = v1.ToDense(arr.Length);
-            Assert.AreEqual(true, v1.ValueEquals(v1));
-            Assert.AreEqual(true, v2.ValueEquals(v2));
-            Assert.AreEqual(true, v3.ValueEquals(v3));
-            Assert.AreEqual(true, v1.ValueEquals(v2));
-            Assert.AreEqual(true, v1.ValueEquals(v3));
-            Assert.AreEqual(true, v2.ValueEquals(v1));
-            Assert.AreEqual(true, v3.ValueEquals(v1));
+            Assert.IsTrue(v1.ValueEquals(v1));
+            Assert.IsTrue(v2.ValueEquals(v2));
+            Assert.IsTrue(v3.ValueEquals(v3));
+            Assert.IsTrue(v1.ValueEquals(v2));
+            Assert.IsTrue(v1.ValueEquals(v3));
+            Assert.IsTrue(v2.ValueEquals(v1));
+            Assert.IsTrue(v3.ValueEquals(v1));
 
             var v5 = FlexibleVector.CreateSparse(arr);
             Assert.AreEqual(2, v5.Length);
@@ -234,7 +234,7 @@ namespace ESkMeansLib.Tests.Model
             Assert.AreEqual(0, empty3.GetMaxVectorLength());
         }
 
-        private static FlexibleVector[] CreateRandomVectors(int num, bool sparse, int fixedLen = -1)
+        internal static FlexibleVector[] CreateRandomVectors(int num, bool sparse, int fixedLen = -1)
         {
             var rnd = new Random(345897038);
             var res = new FlexibleVector[num];
@@ -254,6 +254,7 @@ namespace ESkMeansLib.Tests.Model
                     continue;
                 }
 
+                hs.Clear();
                 var indexes = new int[vals.Length];
                 for (int j = 0; j < indexes.Length; j++)
                 {
@@ -531,36 +532,36 @@ namespace ESkMeansLib.Tests.Model
             {
                 foreach (var v in set)
                 {
-                    Assert.AreEqual(true, v.ValueEquals(v));
+                    Assert.IsTrue(v.ValueEquals(v));
                     var v2 = v.Clone();
-                    Assert.AreEqual(true, v.ValueEquals(v2));
-                    Assert.AreEqual(true, v2.ValueEquals(v));
+                    Assert.IsTrue(v.ValueEquals(v2));
+                    Assert.IsTrue(v2.ValueEquals(v));
                     var vD = v2.Clone().ToDense(v2.GetMaxVectorLength());
-                    Assert.AreEqual(true, v2.ValueEquals(vD));
-                    Assert.AreEqual(true, vD.ValueEquals(v2));
+                    Assert.IsTrue(v2.ValueEquals(vD));
+                    Assert.IsTrue(vD.ValueEquals(v2));
                     if(v.Length == 0)
                         continue;
                     
                     var k = v.AsEnumerable().First().key;
-                    Assert.AreEqual(true, v2.TrySetValue(k, v[k]+0.01f));
-                    Assert.AreEqual(false, v.ValueEquals(v2));
-                    Assert.AreEqual(false, v2.ValueEquals(v));
-                    Assert.AreEqual(false, v2.ValueEquals(vD));
-                    Assert.AreEqual(false, vD.ValueEquals(v2));
+                    Assert.IsTrue(v2.TrySetValue(k, v[k]+0.01f));
+                    Assert.IsFalse(v.ValueEquals(v2));
+                    Assert.IsFalse(v2.ValueEquals(v));
+                    Assert.IsFalse(v2.ValueEquals(vD));
+                    Assert.IsFalse(vD.ValueEquals(v2));
 
                     v2 = v.Clone();
                     k = v.AsEnumerable().Last().key;
-                    Assert.AreEqual(true, v2.TrySetValue(k, v[k] - 0.01f));
-                    Assert.AreEqual(false, v.ValueEquals(v2));
-                    Assert.AreEqual(false, v2.ValueEquals(v));
-                    Assert.AreEqual(false, v2.ValueEquals(vD));
-                    Assert.AreEqual(false, vD.ValueEquals(v2));
+                    Assert.IsTrue(v2.TrySetValue(k, v[k] - 0.01f));
+                    Assert.IsFalse(v.ValueEquals(v2));
+                    Assert.IsFalse(v2.ValueEquals(v));
+                    Assert.IsFalse(v2.ValueEquals(vD));
+                    Assert.IsFalse(vD.ValueEquals(v2));
 
                     v2 = v2.ToDense(v2.GetMaxVectorLength());
-                    Assert.AreEqual(false, v.ValueEquals(v2));
-                    Assert.AreEqual(false, v2.ValueEquals(v));
-                    Assert.AreEqual(false, v2.ValueEquals(vD));
-                    Assert.AreEqual(false, vD.ValueEquals(v2));
+                    Assert.IsFalse(v.ValueEquals(v2));
+                    Assert.IsFalse(v2.ValueEquals(v));
+                    Assert.IsFalse(v2.ValueEquals(vD));
+                    Assert.IsFalse(vD.ValueEquals(v2));
                 }
             }
         }
@@ -577,7 +578,7 @@ namespace ESkMeansLib.Tests.Model
                 {
                     var dict = v.ToDictionary();
                     var v2 = new FlexibleVector(dict);
-                    Assert.AreEqual(true, v.ValueEquals(v2));
+                    Assert.IsTrue(v.ValueEquals(v2));
                 }
             }
         }
@@ -593,11 +594,11 @@ namespace ESkMeansLib.Tests.Model
                 {
                     var v2 = v.Clone();
                     Assert.AreNotEqual(v, v2);
-                    Assert.AreEqual( true, v.ValueEquals(v2));
+                    Assert.IsTrue(v.ValueEquals(v2));
                     if(v2.Length == 0)
                         continue;
                     v2.TrySetValue(v2.AsEnumerable().First().key, v2[v2.AsEnumerable().First().key] + 1);
-                    Assert.AreEqual( false, v.ValueEquals(v2));
+                    Assert.IsFalse(v.ValueEquals(v2));
 
                 }
             }
@@ -624,7 +625,7 @@ namespace ESkMeansLib.Tests.Model
                         using (var reader = new BinaryReader(ms))
                         {
                             var v2 = FlexibleVector.FromReader(reader);
-                            Assert.AreEqual(true, v.ValueEquals(v2));
+                            Assert.IsTrue(v.ValueEquals(v2));
                         }
                     }
                 }

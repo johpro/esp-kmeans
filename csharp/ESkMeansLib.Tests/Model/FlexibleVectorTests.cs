@@ -633,6 +633,20 @@ namespace ESkMeansLib.Tests.Model
 
             
         }
+
+        [TestMethod]
+        public void ToStringTest()
+        {
+            var setS = CreateRandomVectors(10, true);
+            var setD = CreateRandomVectors(10, false);
+            foreach (var set in new[] { setS, setD })
+            {
+                foreach (var v in set)
+                {
+                    Trace.WriteLine(v);
+                }
+            }
+        }
         
     }
 }

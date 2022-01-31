@@ -7,6 +7,7 @@
 
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -1334,6 +1335,30 @@ namespace ESkMeansLib.Model
             return new FlexibleVector(indexes, values);
         }
 
+        public override string ToString()
+        {
+            const int numVals = 3;
+            if (_indexes == null)
+            {
+                //is sparse
+                return _values.Length <= 2 * numVals
+                    ? $"[{ValuesToString(_values)}]"
+                    : $"[{ValuesToString(_values.Take(numVals))}, ... , {ValuesToString(_values.Skip(_values.Length - numVals))}]";
+            }
+            //is dense
+            return _values.Length <= 2 * numVals
+                ? $"[{ValuesToString(AsEnumerable())}]"
+                : $"[{ValuesToString(AsEnumerable().Take(numVals))}, ... , {ValuesToString(_indexes.Skip(_values.Length - numVals).Zip(_values.Skip(_values.Length - numVals)))}]";
+        }
+
+        private static string ValuesToString(IEnumerable<float> vals)
+        {
+            return string.Join(", ", vals.Select(v => v.ToString(CultureInfo.InvariantCulture)));
+        }
+        private static string ValuesToString(IEnumerable<(int idx, float val)> vals)
+        {
+            return string.Join(", ", vals.Select(p => $"({p.idx}, {p.val.ToString(CultureInfo.InvariantCulture)})"));
+        }
     }
 
 

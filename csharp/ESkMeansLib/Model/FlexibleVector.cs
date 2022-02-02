@@ -8,6 +8,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -570,12 +571,39 @@ namespace ESkMeansLib.Model
         /// <param name="val"></param>
         public void MultiplyWith(float val)
         {
-            //TODO: use AVX instructions
-            for (int i = 0; i < _values.Length; i++)
+            const int vecSize = 8;
+            if (Avx.IsSupported && _values.Length >= vecSize)
             {
-                _values[i] *= val;
-            }
+                if (vecSize != Vector256<float>.Count)
+                    throw new Exception("AVX vector size mismatch");
 
+                var factorVec = Vector256.Create(val, val, val, val, val, val, val, val);
+
+                fixed (float* values = _values)
+                {
+                    var i = 0;
+                    var limit = _values.Length - vecSize;
+                    
+                    for (; i <= limit; i += vecSize)
+                    {
+                        var v = Avx.LoadVector256(values + i);
+                        var product = Avx.Multiply(v, factorVec);
+                        Avx.Store(values + i, product);
+                    }
+
+                    for (; i < _values.Length; i++)
+                    {
+                        values[i] *= val;
+                    }
+                }
+            }
+            else
+            {
+                for (int i = 0; i < _values.Length; i++)
+                {
+                    _values[i] *= val;
+                }
+            }
             InvalidateValues();
         }
 
@@ -585,9 +613,38 @@ namespace ESkMeansLib.Model
         /// <param name="val"></param>
         public void DivideBy(float val)
         {
-            for (int i = 0; i < _values.Length; i++)
+            const int vecSize = 8;
+            if (Avx.IsSupported && _values.Length >= vecSize)
             {
-                _values[i] /= val;
+                if (vecSize != Vector256<float>.Count)
+                    throw new Exception("AVX vector size mismatch");
+
+                var factorVec = Vector256.Create(val, val, val, val, val, val, val, val);
+
+                fixed (float* values = _values)
+                {
+                    var i = 0;
+                    var limit = _values.Length - vecSize;
+
+                    for (; i <= limit; i += vecSize)
+                    {
+                        var v = Avx.LoadVector256(values + i);
+                        var product = Avx.Divide(v, factorVec);
+                        Avx.Store(values + i, product);
+                    }
+
+                    for (; i < _values.Length; i++)
+                    {
+                        values[i] /= val;
+                    }
+                }
+            }
+            else
+            {
+                for (int i = 0; i < _values.Length; i++)
+                {
+                    _values[i] /= val;
+                }
             }
             InvalidateValues();
         }
@@ -1100,13 +1157,7 @@ namespace ESkMeansLib.Model
                 return; //cannot normalize zero vector
 
             var norm = (float)Math.Sqrt(squaredSum);
-
-            for (int i = 0; i < _values.Length; i++)
-            {
-                _values[i] /= norm;
-            }
-
-            InvalidateValues();
+            DivideBy(norm);
             _isUnitVector = true;
             _isUnitVectorSet = true;
         }
@@ -1143,14 +1194,8 @@ namespace ESkMeansLib.Model
 
             createdNew = true;
             var norm = (float)Math.Sqrt(squaredSum);
-
-            var newValues = new float[_values.Length];
-            for (int i = 0; i < _values.Length; i++)
-            {
-                newValues[i] = _values[i] / norm;
-            }
-
-            var vec = new FlexibleVector(_indexes, newValues);
+            var vec = new FlexibleVector(_indexes, _values.ToArray(), (_entries, _buckets, _fastModMult));
+            vec.DivideBy(norm);
             vec._isUnitVector = true;
             vec._isUnitVectorSet = true;
             return vec;

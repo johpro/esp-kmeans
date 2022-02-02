@@ -277,8 +277,8 @@ namespace ESkMeansLib.Tests.Model
         public void MultiplyWithTest()
         {
             const float factor = 9;
-            var setS = CreateRandomVectors(10, true);
-            var setD = CreateRandomVectors(10, false);
+            var setS = CreateRandomVectors(100, true);
+            var setD = CreateRandomVectors(100, false);
             foreach (var set in new[] { setS, setD })
             {
                 foreach (var v in set)
@@ -301,8 +301,8 @@ namespace ESkMeansLib.Tests.Model
         public void DivideByFloatTest()
         {
             const float factor = 3.5f;
-            var setS = CreateRandomVectors(10, true);
-            var setD = CreateRandomVectors(10, false);
+            var setS = CreateRandomVectors(100, true);
+            var setD = CreateRandomVectors(100, false);
             foreach (var set in new[] { setS, setD })
             {
                 foreach (var v in set)
@@ -324,8 +324,8 @@ namespace ESkMeansLib.Tests.Model
         public void DivideByIntTest()
         {
             const int factor = 5;
-            var setS = CreateRandomVectors(10, true);
-            var setD = CreateRandomVectors(10, false);
+            var setS = CreateRandomVectors(100, true);
+            var setD = CreateRandomVectors(100, false);
             foreach (var set in new[] { setS, setD })
             {
                 foreach (var v in set)
@@ -347,8 +347,8 @@ namespace ESkMeansLib.Tests.Model
         [TestMethod()]
         public void GetSquaredSumTest()
         {
-            var setS = CreateRandomVectors(10, true);
-            var setD = CreateRandomVectors(10, false);
+            var setS = CreateRandomVectors(100, true);
+            var setD = CreateRandomVectors(100, false);
             foreach (var set in new[] { setS, setD })
             {
                 foreach (var v in set)

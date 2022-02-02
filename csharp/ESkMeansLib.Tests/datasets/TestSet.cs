@@ -83,6 +83,7 @@ namespace ESkMeansLib.Tests.datasets
             }
 
             var elske = KeyphraseExtractor.CreateFromDocuments(docs.Select(d => d.Content));
+            elske.StopWords = StopWords.EnglishStopWords;
             var vectors = docs.Select(d =>
             {
                 var v = new FlexibleVector(elske.GenerateBoWVector(d.Content));

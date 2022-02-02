@@ -14,13 +14,11 @@ using ESkMeansLib.Model;
 namespace ESkMeansLib.Helpers
 {
     /// <summary>
-    /// Indexing structure for unit-length vectors. Given a minimum dot product of Lambda, find unit-length vectors that will have dot product of at least Lambda.
+    /// Indexing structure for unit-length vectors. Given a minimum dot product of Lambda, find all unit-length vectors that can have dot product of at least Lambda.
     /// </summary>
     public class DotProductIndexedVectors
     {
-        private readonly float[] _minDotProductValues;
-        private readonly float[] _minSquaredSumOfTokens;
-
+        
         public float MinDotProduct { get; }
         public int VectorsCount { get; private set; }
         public int MaxId { get; private set; }
@@ -56,6 +54,8 @@ namespace ESkMeansLib.Helpers
 
         }
 
+        private readonly bool _hasOnlyZeroThreshold;
+
         private readonly DotProductThItem[] _map;
 
         private readonly Dictionary<int, List<int>> _globalMap = new();
@@ -69,7 +69,7 @@ namespace ESkMeansLib.Helpers
 
 
         public DotProductIndexedVectors(bool isSingleTokenShortcutEnabled = false)
-            : this(new[] { 0.1f, 0.25f, 0.4f, 0.6f}, isSingleTokenShortcutEnabled)
+            : this(new[] { 0.1f, 0.25f, 0.4f, 0.6f }, isSingleTokenShortcutEnabled)
         {
         }
 
@@ -100,14 +100,21 @@ namespace ESkMeansLib.Helpers
                 Lemma 3: given value > 0 && < minDotProduct, then we would need at least minDotProduct^2/value^2
                         of tokens with <= value so that we can reach minDotProduct
              */
-            _minDotProductValues = minDotProductValues.ToArray();
-            Array.Sort(_minDotProductValues);
-            MinDotProduct = _minDotProductValues[0];
-            _minSquaredSumOfTokens = new float[_minDotProductValues.Length];
-            _map = new DotProductThItem[_minDotProductValues.Length];
+            var minDotProductValues1 = minDotProductValues.ToArray();
+            if (minDotProductValues1.Length == 1 && minDotProductValues1[0] <= float.Epsilon)
+            {
+                _hasOnlyZeroThreshold = true;
+                if (isSingleTokenShortcutEnabled)
+                    throw new ArgumentException("single token-shortcut not applicable if sole threshold is 0");
+            }
+
+            Array.Sort(minDotProductValues1);
+            MinDotProduct = minDotProductValues1[0];
+            
+            _map = new DotProductThItem[minDotProductValues1.Length];
             for (int i = 0; i < _map.Length; i++)
             {
-                var minDotProduct = _minDotProductValues[i];
+                var minDotProduct = minDotProductValues1[i];
                 _map[i] = new DotProductThItem
                 {
                     MinDotProduct = minDotProduct,
@@ -120,7 +127,9 @@ namespace ESkMeansLib.Helpers
             }
         }
 
-
+        /// <summary>
+        /// Clear index
+        /// </summary>
         public void Clear()
         {
             foreach (var dict in _map)
@@ -137,7 +146,10 @@ namespace ESkMeansLib.Helpers
         }
 
 
-
+        /// <summary>
+        /// Clear index and add all vectors in array to index, using the array position as ID
+        /// </summary>
+        /// <param name="vectors"></param>
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         public void Set(FlexibleVector[] vectors)
         {
@@ -148,22 +160,32 @@ namespace ESkMeansLib.Helpers
             }
         }
 
-
+        /// <summary>
+        /// Add vector v to index. A unique ID has to be provided, which will be returned on querying the index
+        /// (the vectors are not stored).
+        /// </summary>
+        /// <param name="v">Vector to add</param>
+        /// <param name="id">Unique number to identify vector</param>
+        /// <exception cref="ArgumentException"></exception>
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        public unsafe void Add(FlexibleVector mean, int id)
+        public unsafe void Add(FlexibleVector v, int id)
         {
-            if (mean.Length < 1)
-                return;
+            if (v.Length < 1)
+                throw new ArgumentException("cannot add zero vector to index");
+            if (!v.IsSparse)
+                v = v.ToSparse();
+            if (!v.IsUnitVector)
+                throw new ArgumentException("vector has to have length 1");
             VectorsCount++;
             MaxId = Math.Max(MaxId, id);
-            if (_minDotProductValues.Length == 1 && _minDotProductValues[0] <= float.Epsilon)
+            if (_hasOnlyZeroThreshold)
             {
                 //we just add all tokens
-                AddVectorZero(mean, id);
+                AddVectorZero(v, id);
                 return;
             }
 
-            var len = SortValues(mean, out var indexes, out var values);
+            var len = SortValues(v, out var indexes, out var values);
             var valuesSquared = ArrayPool<float>.Shared.Rent(len);
             fixed (float* valuesSquaredPtr = valuesSquared, valuesPtr = values)
             {
@@ -178,12 +200,15 @@ namespace ESkMeansLib.Helpers
 
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private void AddVectorZero(FlexibleVector mean, int id)
+        private void AddVectorZero(FlexibleVector v, int id)
         {
+            //will be called if only one Lambda is present and it is 0 -> simple index
             var map = _map[0];
-            for (int i = 0; i < mean.Indexes.Length; i++)
+            for (int i = 0; i < v.Indexes.Length; i++)
             {
-                map.TokenToVectorsMap.AddToList(mean.Indexes[i], (id, 1));
+                var idx = v.Indexes[i];
+                map.TokenToVectorsMap.AddToList(idx, (id, 1));
+                //map.SingleTokenToVectorsMap?.AddToList(idx, id);
             }
         }
 
@@ -197,6 +222,13 @@ namespace ESkMeansLib.Helpers
             values = ArrayPool<float>.Shared.Rent(len);
             //vec.Values.CopyTo(values);
             vec.CopyTo(indexes, values);
+            //we are only interested in absolute values
+            for (int i = 0; i < values.Length; i++)
+            {
+                var val = values[i];
+                if (val < 0)
+                    values[i] = Math.Abs(val);
+            }
             Array.Sort(values, indexes, 0, len);
             return len;
         }
@@ -217,8 +249,8 @@ namespace ESkMeansLib.Helpers
                 var squaredSumOfSumSpan = 0f;
 
                 var minDotProduct = map.MinDotProduct;
-                var requiredSquaredSum = map.MinDotProductSquared;
-                var maxSquaredSum = map.MaxSquaredSum;
+                var requiredSquaredSum = map.MinDotProductSquared - 0.001f;
+                var maxSquaredSum = map.MaxSquaredSum + 0.001f; //epsilon so that loop that adds tokens does not stop early
 
                 var minNumTokens = 1;
 
@@ -240,7 +272,7 @@ namespace ESkMeansLib.Helpers
 
                     if (val <= float.Epsilon)
                         break;
-                    
+
                     //now determine min num of tokens with a non-zero entry in this vector
                     //to retrieve required min dot product, given that none of the previous (higher-valued)
                     //tokens were present -> minNumTokens increases monotonically
@@ -283,21 +315,40 @@ namespace ESkMeansLib.Helpers
 
 
 
-
-
-
+        /// <summary>
+        /// Retrieve such vector ids that can lead to dot product >= MinDotProduct with query <paramref name="vector"/>.
+        /// Only valid if provided <paramref name="vector"/> has length equal to or smaller than 1.
+        /// Actual dot product can also be smaller.
+        /// </summary>
+        /// <param name="vector">the query vector</param>
+        /// <returns>Enumeration of found vector IDs</returns>
         public IEnumerable<int> GetNearbyVectors(FlexibleVector vector)
         {
             return GetNearbyVectors(vector, MinDotProduct);
         }
 
+
+        /// <summary>
+        /// Retrieve such vector ids that can lead to dot product >= <param name="minDotProduct"></param> with query <paramref name="vector"/>.
+        /// Only valid if provided <paramref name="vector"/> has length equal to or smaller than 1.
+        /// Actual dot product can also be smaller.
+        /// </summary>
+        /// <param name="vector">the query vector</param>
+        /// <param name="minDotProduct">the lower bound of the dot product</param>
+        /// <returns>Enumeration of found vector IDs</returns>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public IEnumerable<int> GetNearbyVectors(FlexibleVector vector, float minDotProduct)
         {
             //if (minDotProduct < MinDotProduct)
             //    throw new ArgumentException($"{nameof(minDotProduct)} must not be smaller than indexed minimum", nameof(minDotProduct));
             if (!vector.IsSparse)
-                throw new NotSupportedException("dense vectors not yet supported for indexing");
+                vector = vector.ToSparse();
+
+            if (minDotProduct < 0)
+                throw new ArgumentException("minimum dot product must not be negative");
+
+            if (vector.Length == 0)
+                return Enumerable.Empty<int>();
 
             for (int i = _map.Length - 1; i >= 0; i--)
             {
@@ -322,17 +373,23 @@ namespace ESkMeansLib.Helpers
             else
                 hashSet = new HashSet<int>();
 
+            var vecLen = vector.Length;
 
-            var countDict = ArrayPool<int>.Shared.Rent(MaxId + 1);
-            Array.Clear(countDict, 0, MaxId + 1);
-            for (int j = 0; j < vector.Indexes.Length; j++)
+            var countDict = Array.Empty<int>();
+            if (!_hasOnlyZeroThreshold && vecLen > 1)
             {
-                var idx = vector.Indexes[j];
-                if (_globalMap.TryGetValue(idx, out var list) && list.Count != 0)
+                //in the case of only one threshold we do not need to count with global map (and global map is also not populated)
+                countDict = ArrayPool<int>.Shared.Rent(MaxId + 1);
+                Array.Clear(countDict, 0, MaxId + 1);
+                for (int j = 0; j < vector.Indexes.Length; j++)
                 {
-                    foreach (var k in list)
+                    var idx = vector.Indexes[j];
+                    if (_globalMap.TryGetValue(idx, out var list) && list.Count != 0)
                     {
-                        countDict[k]++;
+                        foreach (var k in list)
+                        {
+                            countDict[k]++;
+                        }
                     }
                 }
             }
@@ -344,7 +401,7 @@ namespace ESkMeansLib.Helpers
                 {
                     foreach (var (id, minNumOccurrences) in vecList)
                     {
-                        if (minNumOccurrences == 1 || countDict[id] >= minNumOccurrences)
+                        if (minNumOccurrences == 1 || minNumOccurrences <= vecLen && countDict[id] >= minNumOccurrences)
                         {
                             hashSet.Add(id);
                         }
@@ -359,7 +416,8 @@ namespace ESkMeansLib.Helpers
                 yield return k;
             }
 
-            ArrayPool<int>.Shared.Return(countDict);
+            if (!_hasOnlyZeroThreshold)
+                ArrayPool<int>.Shared.Return(countDict);
             hashSet.Clear();
             _vectorHashSetBag.Add(hashSet);
         }
@@ -367,7 +425,7 @@ namespace ESkMeansLib.Helpers
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private IEnumerable<int> GetNearbyVectorsSingleTokenStrategy(DotProductThItem map, int token)
         {
-            if (!map.SingleTokenToVectorsMap.TryGetValue(token, out var l))
+            if (!map.SingleTokenToVectorsMap!.TryGetValue(token, out var l))
                 return Array.Empty<int>();
             return l;
         }
@@ -401,8 +459,14 @@ namespace ESkMeansLib.Helpers
             _vectorHashSetBag.Add(hashSet);
         }
 
-       
 
+        /// <summary>
+        /// Square n values in a and store result in y
+        /// </summary>
+        /// <param name="n"></param>
+        /// <param name="a"></param>
+        /// <param name="y"></param>
+        /// <exception cref="Exception"></exception>
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         public static unsafe void Square(int n, float* a, float* y)
         {

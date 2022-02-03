@@ -5,7 +5,7 @@ The k-Means algorithm belongs to one of the most popular clustering algorithms, 
 
 ## Setup
 
-The most convenient way of using the library is to get it on NuGet.
+The most convenient way of using the library is to install the package from [NuGet](https://www.nuget.org/packages/ESkMeansLib).
 
 ## Getting Started
 

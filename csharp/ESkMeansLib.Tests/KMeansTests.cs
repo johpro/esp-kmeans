@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Text;
 using System.Threading.Tasks;
 using ElskeLib.Utils;
@@ -117,6 +118,87 @@ namespace ESkMeansLib.Tests
             {
                 Assert.IsTrue(v.IsUnitVector);
             }
+        }
+
+        [TestMethod]
+        public void ExamplesTest()
+        {
+
+            var km = new KMeans();
+
+            var data = new[]
+            {
+                new[] { 0.1f, 0.8f },
+                new[] { 0.2f, 0.7f },
+                new[] { 0.5f, 0.45f },
+                new[] { 0.6f, 0.5f }
+            };
+            //cluster data into two clusters with k-Means++
+            var (clustering, centroids) = km.Cluster(data, 2);
+            /* OUTPUT:
+             * clustering: 0,0,1,1
+             * centroids: [[0.15, 0.75], [0.55, 0.475]] */
+            Trace.WriteLine($"clustering: {string.Join(',', clustering)}");
+            Trace.WriteLine("centroids:");
+            foreach (var c in centroids)
+                Trace.WriteLine(c);
+
+            //run clustering five times to cluster data into two clusters with k-Means++
+            (clustering, centroids) = km.Cluster(data, 2, 5);
+
+            //sparse data specified with index,value pairs
+            var sparseData = new[]
+            {
+                new[] { (0, 0.1f), (3, 0.8f), (7, 0.1f) },
+                new[] { (0, 0.2f), (3, 0.8f), (6, 0.05f) },
+                new[] { (0, 0.5f), (3, 0.45f) },
+                new[] { (0, 0.6f), (3, 0.5f) }
+            };
+            //cluster sparse data into two clusters and use cosine distance (Spherical k-Means)
+            km.UseSphericalKMeans = true;
+            (clustering, centroids) = km.Cluster(sparseData, 2);
+            /* OUTPUT:
+             * clustering: 0,0,1,1
+             * centroids: [[(0, 0.18335475), (3, 0.9806314), (7, 0.0618031), (6, 0.030387914)],
+             *             [(0, 0.7558947), (3, 0.6546932)]] */
+            Trace.WriteLine($"clustering: {string.Join(',', clustering)}");
+            Trace.WriteLine("centroids:");
+            foreach (var c in centroids)
+                Trace.WriteLine(c);
+
+            var documents = new[]
+            {
+                "I went shopping for groceries and also bought tea",
+                "This hotel is amazing and the view is perfect",
+                "My shopping heist resulted in lots of new shoes",
+                "The rooms in this hotel are a bit dirty"
+            };
+            //obtain sparse vector representations using ElskeLib
+            var elske = KeyphraseExtractor.CreateFromDocuments(documents);
+            elske.StopWords = StopWords.EnglishStopWords;
+            var docVectors = documents
+                .Select(doc => elske.GenerateBoWVector(doc, true));
+            //run clustering
+            km.UseSphericalKMeans = true;
+            (clustering, centroids) = km.Cluster(docVectors, 2);
+            //output of clustering: 0,1,0,1
+            Trace.WriteLine($"clustering: {string.Join(',', clustering)}");
+            //use centroids to determine most relevant tokens for each cluster
+            for (int i = 0; i < centroids.Length; i++)
+            {
+                var c = centroids[i];
+                //get the two entries with the highest weight and retrieve corresponding word
+                var words = c.AsEnumerable()
+                    .OrderByDescending(p => p.value)
+                    .Take(2)
+                    .Select(p => elske.ReferenceIdxMap.GetToken(p.key));
+                Trace.WriteLine($"cluster {i}: {string.Join(',', words)}");
+            }
+            /*
+             * OUTPUT:
+             * cluster 0: groceries,bought
+             * cluster 1: hotel,amazing
+             */
         }
 
         private static string GetClusterDescription(FlexibleVector centroid, KeyphraseExtractor elske)

@@ -7,6 +7,12 @@
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Authors>Johannes Knittel</Authors>
     <Company />
+    <Copyright>Copyright(c) Johannes Knittel</Copyright>
+    <PackageProjectUrl>https://github.com/johpro/es-kmeans</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/johpro/es-kmeans</RepositoryUrl>
+	  <Title>ES-kMeans</Title>
+    <Description>ES-kMeans is a fast, scalable, and easy-to-use clustering library with efficient implementations of k-Means++ and Spherical k-Means++.</Description>
+	  <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
 </Project>

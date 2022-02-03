@@ -22,7 +22,7 @@ namespace ESkMeansLib.Helpers
         public float MinDotProduct { get; }
         public int VectorsCount { get; private set; }
         public int MaxId { get; private set; }
-        public bool IsSingleTokenShortcutEnabled { get; }
+        
 
         class DotProductThItem
         {
@@ -32,12 +32,7 @@ namespace ESkMeansLib.Helpers
             /// we get at least required dot product.
             /// </summary>
             public readonly Dictionary<int, List<(int id, int minNumOccurrences)>> TokenToVectorsMap = new();
-
-            /// <summary>
-            /// given an input vector with only one non-zero token, retrieve list of vectors that
-            /// can lead to required dot product (= all vectors with value >= min dot product for the respective token index)
-            /// </summary>
-            public Dictionary<int, List<int>>? SingleTokenToVectorsMap = null;
+            
 
             public float MinDotProduct;
             public float MinDotProductSquared;
@@ -55,27 +50,22 @@ namespace ESkMeansLib.Helpers
         }
 
         private readonly bool _hasOnlyZeroThreshold;
-
         private readonly DotProductThItem[] _map;
-
         private readonly Dictionary<int, List<int>> _globalMap = new();
-
-        private readonly Dictionary<int, List<(int id, float value)>> _tokenToVectorsMap = new();
 
         private readonly ConcurrentBag<HashSet<int>> _vectorHashSetBag = new();
         private readonly ConcurrentBag<Dictionary<int, int>> _vectorDictionaryBag = new();
+        private static readonly Dictionary<int, int> EmptyDict = new(0);
 
         public int DebugTotalMissed { get; set; }
 
 
-        public DotProductIndexedVectors(bool isSingleTokenShortcutEnabled = false)
-            : this(new[] { 0.1f, 0.25f, 0.4f, 0.6f }, isSingleTokenShortcutEnabled)
+        public DotProductIndexedVectors() : this(new[] { 0.1f, 0.25f, 0.4f, 0.6f })
         {
         }
 
-        public DotProductIndexedVectors(float[] minDotProductValues, bool isSingleTokenShortcutEnabled = false)
+        public DotProductIndexedVectors(float[] minDotProductValues)
         {
-            IsSingleTokenShortcutEnabled = isSingleTokenShortcutEnabled;
             /*
              *  Lemma 1: given a vector v with at most unit-length, then
                     the vector v/|v| maximizes the dot product with v among all
@@ -104,8 +94,6 @@ namespace ESkMeansLib.Helpers
             if (minDotProductValues1.Length == 1 && minDotProductValues1[0] <= float.Epsilon)
             {
                 _hasOnlyZeroThreshold = true;
-                if (isSingleTokenShortcutEnabled)
-                    throw new ArgumentException("single token-shortcut not applicable if sole threshold is 0");
             }
 
             Array.Sort(minDotProductValues1);
@@ -119,11 +107,8 @@ namespace ESkMeansLib.Helpers
                 {
                     MinDotProduct = minDotProduct,
                     MinDotProductSquared = minDotProduct * minDotProduct,
-                    MaxSquaredSum = 1 - minDotProduct * minDotProduct,
-                    SingleTokenToVectorsMap = IsSingleTokenShortcutEnabled ? new Dictionary<int, List<int>>() : null
+                    MaxSquaredSum = 1 - minDotProduct * minDotProduct
                 };
-                //_minSquaredSumOfTokens[i] = 1 - minDotProduct * minDotProduct;
-                //_minValueThresholds[i] = minDotProduct * minDotProduct * 0.05f;
             }
         }
 
@@ -265,7 +250,6 @@ namespace ESkMeansLib.Helpers
                         //if only this token is present in query it could already be enough to get
                         //required dot product
                         map.TokenToVectorsMap.AddToList(idx, (id, 1));
-                        map.SingleTokenToVectorsMap?.AddToList(idx, id);
                         currentEndIdxOfSumSpan = i - 1;
                         continue;
                     }
@@ -339,8 +323,6 @@ namespace ESkMeansLib.Helpers
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public IEnumerable<int> GetNearbyVectors(FlexibleVector vector, float minDotProduct)
         {
-            //if (minDotProduct < MinDotProduct)
-            //    throw new ArgumentException($"{nameof(minDotProduct)} must not be smaller than indexed minimum", nameof(minDotProduct));
             if (!vector.IsSparse)
                 vector = vector.ToSparse();
 
@@ -355,10 +337,9 @@ namespace ESkMeansLib.Helpers
                 var map = _map[i];
                 if (map.MinDotProduct <= minDotProduct)
                 {
-                    if (map.SingleTokenToVectorsMap != null && vector.Indexes.Length == 1)
-                        return GetNearbyVectorsSingleTokenStrategy(map, vector.Indexes[0]);
-                    return GetNearbyVectorsCountStrategy(map, vector);
-                    //return GetNearbyVectorsUnconstrained(dict, vector);
+                    return vector.Indexes.Length == 1
+                        ? GetNearbyVectorsSingleTokenStrategy(map, vector.Indexes[0])
+                        : GetNearbyVectorsCountStrategy(map, vector);
                 }
             }
 
@@ -375,12 +356,15 @@ namespace ESkMeansLib.Helpers
 
             var vecLen = vector.Length;
 
-            var countDict = Array.Empty<int>();
-            if (!_hasOnlyZeroThreshold && vecLen > 1)
+            var countDict = EmptyDict;
+            if (!_hasOnlyZeroThreshold)
             {
                 //in the case of only one threshold we do not need to count with global map (and global map is also not populated)
-                countDict = ArrayPool<int>.Shared.Rent(MaxId + 1);
-                Array.Clear(countDict, 0, MaxId + 1);
+                if (_vectorDictionaryBag.TryTake(out countDict))
+                    countDict.Clear();
+                else
+                    countDict = new();
+
                 for (int j = 0; j < vector.Indexes.Length; j++)
                 {
                     var idx = vector.Indexes[j];
@@ -388,7 +372,7 @@ namespace ESkMeansLib.Helpers
                     {
                         foreach (var k in list)
                         {
-                            countDict[k]++;
+                            countDict.IncrementItem(k);
                         }
                     }
                 }
@@ -415,9 +399,13 @@ namespace ESkMeansLib.Helpers
             {
                 yield return k;
             }
+            
+            if (countDict != EmptyDict)
+            {
+                countDict.Clear();
+                _vectorDictionaryBag.Add(countDict);
+            }
 
-            if (!_hasOnlyZeroThreshold)
-                ArrayPool<int>.Shared.Return(countDict);
             hashSet.Clear();
             _vectorHashSetBag.Add(hashSet);
         }
@@ -425,9 +413,14 @@ namespace ESkMeansLib.Helpers
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private IEnumerable<int> GetNearbyVectorsSingleTokenStrategy(DotProductThItem map, int token)
         {
-            if (!map.SingleTokenToVectorsMap!.TryGetValue(token, out var l))
-                return Array.Empty<int>();
-            return l;
+            if (!map.TokenToVectorsMap.TryGetValue(token, out var l))
+                yield break;
+            foreach ((int id, int minNumOccurrences) in l)
+            {
+                if(minNumOccurrences > 1)
+                    continue;
+                yield return id;
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]

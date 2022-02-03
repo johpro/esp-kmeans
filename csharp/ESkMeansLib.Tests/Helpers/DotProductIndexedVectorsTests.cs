@@ -30,7 +30,7 @@ namespace ESkMeansLib.Tests.Helpers
             var db = new DotProductIndexedVectors();
 
 
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 2; i++)
             {
                 db.Set(indexVectors);
                 foreach (var qV in queryVectors)
@@ -47,8 +47,6 @@ namespace ESkMeansLib.Tests.Helpers
                     }
                 }
                 db.Clear();
-                if (i == 1)
-                    db = new DotProductIndexedVectors(true);
             }
 
             db = new DotProductIndexedVectors(new[] { 0f });

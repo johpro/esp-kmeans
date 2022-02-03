@@ -23,6 +23,12 @@
     <None Update="datasets\20news.json.gz">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="datasets\arxiv_100k.elske">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="datasets\arxiv_100k_vectors.bin.gz">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="datasets\iris.data">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

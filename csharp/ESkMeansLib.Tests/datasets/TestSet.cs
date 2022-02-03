@@ -106,6 +106,19 @@ namespace ESkMeansLib.Tests.datasets
                 Name = "20Newsgroups"
             };
         }
+
+        public static TestSet LoadArxiv100K()
+        {
+            const string fn = "datasets/arxiv_100k_vectors.bin.gz";
+            using var reader =
+                new BinaryReader(new BufferedStream(new GZipStream(File.OpenRead(fn), CompressionMode.Decompress)));
+            var vectors = FlexibleVector.ArrayFromReader(reader);
+            return new TestSet
+            {
+                Name = "Arxiv100k",
+                Data = vectors
+            };
+        }
     }
 
     public record Document

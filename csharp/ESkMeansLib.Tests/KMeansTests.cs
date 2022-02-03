@@ -12,6 +12,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using ElskeLib.Utils;
 using ESkMeansLib.Helpers;
 using ESkMeansLib.Model;
 using ESkMeansLib.Tests.datasets;
@@ -52,6 +53,96 @@ namespace ESkMeansLib.Tests
 
             RunBasicKMeansVariations(set, 20);
         }
+
+        [TestMethod]
+        public void ClusterArxivTest()
+        {
+            const int numClusters = 100;
+            var set = TestSet.LoadArxiv100K();
+            var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true };
+            var (clustering, centroids) = kmeans.Cluster(set.Data!, numClusters, 5);
+            var clusterCounts = KMeans.GetClusterCounts(clustering, numClusters);
+
+            var elske = KeyphraseExtractor.FromFile("datasets/arxiv_100k.elske");
+
+            Trace.WriteLine("\r\n");
+            for (int i = 0; i < centroids.Length; i++)
+            {
+                Trace.WriteLine($"CLUSTER {i} | {clusterCounts[i]} items | {GetClusterDescription(centroids[i], elske)}");
+            }
+
+        }
+
+        [TestMethod]
+        public void ClusterArxivBenchmarkTest()
+        {
+            const int numRuns = 2;
+            var set = TestSet.LoadArxiv100K();
+            var kmeans = new KMeans { UseSphericalKMeans = true };
+            foreach (var numClusters in new[]{100, 1_000})
+            {
+                Trace.WriteLine($"\r\n{numClusters} clusters\r\n");
+                kmeans.UseIndexedMeans = false;
+                kmeans.UseClustersChangedMap = false;
+                var watch = Stopwatch.StartNew();
+                kmeans.Cluster(set.Data!, numClusters, numRuns);
+                watch.Stop();
+                Trace.WriteLine($"{watch.Elapsed / numRuns} | baseline");
+
+                kmeans.UseIndexedMeans = false;
+                kmeans.UseClustersChangedMap = true;
+                watch.Restart();
+                kmeans.Cluster(set.Data!, numClusters, numRuns);
+                watch.Stop();
+                Trace.WriteLine($"{watch.Elapsed / numRuns} | NCC");
+
+                kmeans.UseIndexedMeans = true;
+                kmeans.UseClustersChangedMap = true;
+                watch.Restart();
+                kmeans.Cluster(set.Data!, numClusters, numRuns);
+                watch.Stop();
+                Trace.WriteLine($"{watch.Elapsed / numRuns} | NCC+INDEX");
+            }
+        }
+
+        [TestMethod()]
+        public void EnsureUnitVectorsTest()
+        {
+            var set = FlexibleVectorTests.CreateRandomVectors(1000, true);
+            Parallel.For(0, 10, i =>
+            {
+                KMeans.EnsureUnitVectors(set);
+            });
+            foreach (var v in set)
+            {
+                Assert.IsTrue(v.IsUnitVector);
+            }
+        }
+
+        private static string GetClusterDescription(FlexibleVector centroid, KeyphraseExtractor elske)
+        {
+            if (centroid.Length == 0)
+                return "";
+            var sb = new StringBuilder();
+            centroid.ToArrays(out var indexes, out var values);
+            Array.Sort(values, indexes);
+            var numVals = Math.Min(5, indexes.Length);
+            for (int i = 1; i <= numVals; i++)
+            {
+                var idx = indexes[^i];
+                var val = values[^i];
+                var token = elske.ReferenceIdxMap.GetToken(idx);
+                if (sb.Length > 0)
+                    sb.Append(", ");
+                sb.Append($"{token} ({val})");
+            }
+
+            if (indexes.Length > 5)
+                sb.Append(", ...");
+
+            return sb.ToString();
+        }
+
 
         private void RunBasicKMeansVariations(TestSet set, int k)
         {
@@ -107,19 +198,6 @@ namespace ESkMeansLib.Tests
             return (clustering, centroids, nmi);
         }
 
-        [TestMethod()]
-        public void EnsureUnitVectorsTest()
-        {
-            var set = FlexibleVectorTests.CreateRandomVectors(1000, true);
-            Parallel.For(0, 10, i =>
-            {
-                KMeans.EnsureUnitVectors(set);
-            });
-            foreach (var v in set)
-            {
-                Assert.IsTrue(v.IsUnitVector);
-            }
-        }
         
 
     }

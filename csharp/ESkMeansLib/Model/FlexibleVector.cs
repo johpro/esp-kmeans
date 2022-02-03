@@ -705,6 +705,16 @@ namespace ESkMeansLib.Model
                 Array.Copy(_indexes, indexes, _indexes.Length);
             Array.Copy(_values, values, _values.Length);
         }
+        /// <summary>
+        /// Export vector representation into arrays. <paramref name="indexes"/> is null if vector is dense.
+        /// </summary>
+        /// <param name="indexes"></param>
+        /// <param name="values"></param>
+        public void ToArrays(out int[]? indexes, out float[] values)
+        {
+            indexes = _indexes?.ToArray();
+            values = _values.ToArray();
+        }
 
         private float SquaredEuclideanDistanceWithDense(FlexibleVector other)
         {
@@ -1378,6 +1388,23 @@ namespace ESkMeansLib.Model
             }
 
             return new FlexibleVector(indexes, values);
+        }
+
+        /// <summary>
+        /// Read vectors from dump using provided reader.
+        /// </summary>
+        /// <param name="reader"></param>
+        /// <returns></returns>
+        public static FlexibleVector[] ArrayFromReader(BinaryReader reader)
+        {
+            var len = reader.ReadInt32();
+            var res = new FlexibleVector[len];
+            for (int i = 0; i < res.Length; i++)
+            {
+                res[i] = FromReader(reader);
+            }
+
+            return res;
         }
 
         public override string ToString()

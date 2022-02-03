@@ -34,9 +34,9 @@ namespace ESkMeansLib
         public bool EnableVerboseLogging { get; set; }
 
         /// <summary>
-        /// If true (default) uses cosine distance (Spherical k-Means), otherwise Euclidean distance (traditional k-Means)
+        /// If true uses cosine distance (Spherical k-Means, e.g., better for text). The default is Euclidean distance (traditional k-Means).
         /// </summary>
-        public bool UseSphericalKMeans { get; set; } = true;
+        public bool UseSphericalKMeans { get; set; }
         /// <summary>
         /// If true (default) uses strategy to reduce number of computations based on centroids that haven't changed between iterations
         /// </summary>

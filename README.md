@@ -1,6 +1,7 @@
 
 # ES-kMeans
 ES-kMeans is a fast and easy-to-use clustering library written in C# to cluster high-dimensional and potentially sparse data with k-Means++ or Spherical k-Means++ (Spherical k-Means uses the cosine distance instead of the Euclidean).
+It targets .NET >= 6 but can also be called from python scripts (see below).
 
 The k-Means algorithm belongs to one of the most popular clustering algorithms, but it typically does not scale well (i.e., linearly) with *k*, the number of clusters. The goal of this library is to cluster large datasets efficiently even if the number of clusters is high. It has a highly parallel implementation that utilizes AVX instructions (if applicable) and applies several optimizations to reduce the number of comparisons. For instance, the Spherical k-Means implementation achieves sublinear scaling with respect to the number of clusters if applied to sparse data (e.g., text documents). If you want to find out more how this works, you can read the paper [Efficient Sparse Spherical k-Means for Document Clustering](https://arxiv.org/abs/2108.00895) that details some of the applied strategies.
 

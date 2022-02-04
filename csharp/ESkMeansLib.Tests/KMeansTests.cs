@@ -171,22 +171,24 @@ namespace ESkMeansLib.Tests
                 "I went shopping for groceries and also bought tea",
                 "This hotel is amazing and the view is perfect",
                 "My shopping heist resulted in lots of new shoes",
-                "The rooms in this hotel are a bit dirty"
+                "The rooms in this hotel are a bit dirty",
+                "my three fav things to do: shopping, shopping, shopping"
             };
             //obtain sparse vector representations using ElskeLib
             var elske = KeyphraseExtractor.CreateFromDocuments(documents);
             elske.StopWords = StopWords.EnglishStopWords;
             var docVectors = documents
                 .Select(doc => elske.GenerateBoWVector(doc, true));
-            //run clustering
+            //run clustering three times
             km.UseSphericalKMeans = true;
-            (clustering, centroids) = km.Cluster(docVectors, 2);
-            //output of clustering: 0,1,0,1
+            (clustering, centroids) = km.Cluster(docVectors, 2, 3);
+            //output of clustering: 1,0,1,0,1
             Trace.WriteLine($"clustering: {string.Join(',', clustering)}");
             //use centroids to determine most relevant tokens for each cluster
             for (int i = 0; i < centroids.Length; i++)
             {
                 var c = centroids[i];
+                //we can regard each centroid as a weighted word list
                 //get the two entries with the highest weight and retrieve corresponding word
                 var words = c.AsEnumerable()
                     .OrderByDescending(p => p.value)
@@ -196,8 +198,8 @@ namespace ESkMeansLib.Tests
             }
             /*
              * OUTPUT:
-             * cluster 0: groceries,bought
-             * cluster 1: hotel,amazing
+             * cluster 0: hotel,amazing
+             * cluster 1: shopping,groceries
              */
         }
 

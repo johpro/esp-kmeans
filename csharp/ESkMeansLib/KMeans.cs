@@ -660,9 +660,6 @@ namespace ESkMeansLib
 
 
                 //choosing next centroid with probability proportional to distance
-                //important: this has to be a *probabilistic* draw, thus, we have to traverse items
-                //randomly to make sure that items with same probability also have same chance to get drawn
-
                 var rndVal = random.NextDouble() * totalDistancesSum;
                 double cum = 0;
                 for (int i = 0; i < data.Length; i++)

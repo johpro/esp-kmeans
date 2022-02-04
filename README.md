@@ -1,5 +1,7 @@
+
 # ES-kMeans
 ES-kMeans is a fast and easy-to-use clustering library written in C# to cluster high-dimensional and potentially sparse data with k-Means++ or Spherical k-Means++ (Spherical k-Means uses the cosine distance instead of the Euclidean).
+It targets .NET >= 6 but can also be called from python scripts (see below).
 
 The k-Means algorithm belongs to one of the most popular clustering algorithms, but it typically does not scale well (i.e., linearly) with *k*, the number of clusters. The goal of this library is to cluster large datasets efficiently even if the number of clusters is high. It has a highly parallel implementation that utilizes AVX instructions (if applicable) and applies several optimizations to reduce the number of comparisons. For instance, the Spherical k-Means implementation achieves sublinear scaling with respect to the number of clusters if applied to sparse data (e.g., text documents). If you want to find out more how this works, you can read the paper [Efficient Sparse Spherical k-Means for Document Clustering](https://arxiv.org/abs/2108.00895) that details some of the applied strategies.
 
@@ -75,7 +77,8 @@ var documents = new[]
     "I went shopping for groceries and also bought tea",
     "This hotel is amazing and the view is perfect",
     "My shopping heist resulted in lots of new shoes",
-    "The rooms in this hotel are a bit dirty"
+    "The rooms in this hotel are a bit dirty",
+    "my three fav things to do: shopping, shopping, shopping"
 };
 //obtain sparse vector representations using ElskeLib
 var elske = KeyphraseExtractor.CreateFromDocuments(documents);
@@ -83,15 +86,16 @@ elske.StopWords = StopWords.EnglishStopWords;
 var docVectors = documents
     .Select(doc => elske.GenerateBoWVector(doc, true));
     
-//run clustering
+//run clustering three times
 km.UseSphericalKMeans = true;
-(clustering, centroids) = km.Cluster(docVectors, 2);
-//output of clustering: 0,1,0,1
+(clustering, centroids) = km.Cluster(docVectors, 2, 3);
+//output of clustering: 1,0,1,0,1
 
 //use centroids to determine most relevant tokens for each cluster
 for (int i = 0; i < centroids.Length; i++)
 {
     var c = centroids[i];
+    //we can regard each centroid as a weighted word list
     //get the two entries with the highest weight and retrieve corresponding word
     var words = c.AsEnumerable()
         .OrderByDescending(p => p.value)
@@ -100,11 +104,157 @@ for (int i = 0; i < centroids.Length; i++)
     Trace.WriteLine($"cluster {i}: {string.Join(',', words)}");
 }
 /*
- * OUTPUT:
- * cluster 0: groceries,bought
- * cluster 1: hotel,amazing
- */
+* OUTPUT:
+* cluster 0: hotel,amazing
+* cluster 1: shopping,groceries
+*/
 ```
+
+## Python Examples
+The library targets .NET 6 onwards, but thanks to the [pythonnet](https://github.com/pythonnet/pythonnet) project you can also call it from your python code. Make sure that you have installed the [.NET runtime](https://dotnet.microsoft.com/en-us/download) (>= 6) and download the library (ESkMeansLib.dll).
+
+Install the required python packages (>= 3):
+
+	pip install pythonnet==3.0.0a2 clr-loader
+
+Create a file `runtimeconfig.json` that specifies the correct .NET runtime to use (you may have to adapt the version to your specific environment):
+
+	{
+	  "runtimeOptions": {
+	    "tfm": "net6.0",
+	    "framework": {
+	      "name": "Microsoft.NETCore.App",
+	      "version": "6.0.1"
+	    }
+	  }
+	}
+
+We can now import the library in the python script:
+
+```python
+from clr_loader import get_coreclr
+from pythonnet import set_runtime
+import os
+#we have to load the right .NET runtime (>= 6.0)
+rt = get_coreclr("runtimeconfig.json")
+set_runtime(rt)
+#then we have to add a reference to the library
+import clr
+#absolute path of the ESkMeansLib library
+dll_path = os.path.abspath("./path/to/ESkMeansLib.dll")
+clr.AddReference(dll_path)
+#now we can import classes from the library
+from ESkMeansLib import KMeans
+#it is also possible to import other .NET types
+from System import Array, Single, Int32, ValueTuple
+```
+
+The following code runs k-Means++ on the provided data (composed of four two-dimensional vectors):
+
+```python
+#===== RUN k-Means++ ON DENSE DATA =====
+
+#define data by converting python list to .net array
+data = Array[Array[Single]]([[0.1, 0.8],
+                             [0.2, 0.7],
+                             [0.5, 0.45],
+                             [0.6, 0.5]])
+#instantiate KMeans class
+km = KMeans()
+#run clustering on data
+res = km.Cluster(data, 2)
+#unpack returned values from ValueTuple
+clustering = res.Item1
+centroids = res.Item2
+#clustering contains the zero-based cluster association
+#of the data as a .net array of type Int32[]
+print(f"clustering.length: {clustering.Length}")
+print(f"first item in clustering: {clustering[0]}")
+#we can also convert it to an actual Python list
+print(f"clustering as python list: {list(clustering)}")
+#centroids is a .net array of type FlexibleVector[]
+#and contains the calculated centroids of each cluster
+print(f"centroids.Length: {centroids.Length}")
+for i in range(centroids.Length):
+    print(f"centroid {i}: {centroids[i]}")
+#convert dense vector to sparse vector
+sparse = centroids[0].ToSparse()
+arr = list(sparse.AsEnumerable())
+```
+
+ES-kMeans was specifically designed to handle sparse data, that is, data vectors which are very high-dimensional but typically only have a few non-zero entries. Such vectors are internally stored as list of index-value pairs. Calling the method on sparse data will also return sparse centroids:
+
+```python
+#===== RUN Spherical k-Means++ ON SPARSE DATA =====
+
+#define sparse data as array of index-value pairs
+data = Array[Array[ValueTuple[Int32, Single]]]([
+    [ ValueTuple[Int32, Single](0, 0.1), ValueTuple[Int32, Single](3, 0.8), ValueTuple[Int32, Single](7, 0.1) ],
+    [ ValueTuple[Int32, Single](0, 0.2), ValueTuple[Int32, Single](3, 0.8), ValueTuple[Int32, Single](6, 0.05) ],
+    [ ValueTuple[Int32, Single](0, 0.5), ValueTuple[Int32, Single](3, 0.45) ],
+    [ ValueTuple[Int32, Single](0, 0.6), ValueTuple[Int32, Single](3, 0.5) ]
+    ])
+#set to Spherical k-Means
+km.UseSphericalKMeans = True
+#run clustering
+res = km.Cluster(data, 2)
+#unpack returned values from ValueTuple
+clustering = res.Item1
+centroids = res.Item2
+#print clustering and centroids
+print(f"clustering: {list(clustering)}")
+print(f"centroids.Length: {centroids.Length}")
+for i in range(centroids.Length):
+    print(f"centroid {i}: {centroids[i]}")
+```
+
+The previous example used Spherical k-Means that applies the cosine distance instead of the Euclidean. Spherical k-Means is particularly useful for clustering sparse text representations (e.g., "bag-of-words" model). The following example uses the [ELSKE](https://github.com/johpro/elske) library to obtain such vector representations of a handful of documents so that we can run the clustering algorithm on them:
+
+```python
+#===== RUN Spherical k-Means++ ON TEXT DATA USING ELSKE =====
+
+#add reference to ElskeLib and import class
+dll_path = os.path.abspath("./ElskeLib.dll")
+clr.AddReference(dll_path)
+#now we can import classes from the library
+from ElskeLib.Utils import KeyphraseExtractor, StopWords
+from System import String
+
+documents = Array[String](["I went shopping for groceries and also bought tea",
+    "This hotel is amazing and the view is perfect",
+    "My shopping heist resulted in lots of new shoes",
+    "The rooms in this hotel are a bit dirty",
+    "my three fav things to do: shopping, shopping, shopping"])
+
+#create KeyphraseExtractor instance from a reference collection
+#(here, we just use actual documents that we want to cluster)
+elske = KeyphraseExtractor.CreateFromDocuments(documents)
+#we get better vector representations if we ignore common stop words
+elske.StopWords = StopWords.EnglishStopWords;
+#convert each document into a sparse vector representation
+docVectors = Array[Array[ValueTuple[Int32, Single]]]([ elske.GenerateBoWVector(doc, True) for doc in documents])
+
+#run clustering three times
+km.UseSphericalKMeans = True;
+res = km.Cluster(docVectors, 2, 3);
+#unpack returned values from ValueTuple
+clustering = res.Item1
+centroids = list(res.Item2)
+#print clustering
+print(f"clustering: {list(clustering)}")
+
+for i in range(len(centroids)):    
+    c = centroids[i]
+    #we can interpret centroid as weighted word list
+    words = list(c.AsEnumerable())
+    #sort indexes=words by their weight
+    words.sort(key=lambda t: float(t.Item2))
+    #get the two most relevant indexes and obtain their corresponding word
+    w1 = elske.ReferenceIdxMap.GetToken(words[-1].Item1)
+    w2 = elske.ReferenceIdxMap.GetToken(words[-2].Item1)
+    print(f"cluster {i}: {w1}, {w2}")
+```
+
 
 ## License
 ES-kMeans is MIT licensed.

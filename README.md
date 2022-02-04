@@ -1,13 +1,13 @@
 
-# ES-kMeans
-ES-kMeans is a fast and easy-to-use clustering library written in C# to cluster high-dimensional and potentially sparse data with k-Means++ or Spherical k-Means++ (Spherical k-Means uses the cosine distance instead of the Euclidean).
+# ESP-kMeans
+ESP-kMeans is a fast and easy-to-use clustering library written in C# to cluster high-dimensional and potentially sparse data with k-Means++ or Spherical k-Means++ (Spherical k-Means uses the cosine distance instead of the Euclidean).
 It targets .NET >= 6 but can also be called from python scripts (see below).
 
 The k-Means algorithm belongs to one of the most popular clustering algorithms, but it typically does not scale well (i.e., linearly) with *k*, the number of clusters. The goal of this library is to cluster large datasets efficiently even if the number of clusters is high. It has a highly parallel implementation that utilizes AVX instructions (if applicable) and applies several optimizations to reduce the number of comparisons. For instance, the Spherical k-Means implementation achieves sublinear scaling with respect to the number of clusters if applied to sparse data (e.g., text documents). If you want to find out more how this works, you can read the paper [Efficient Sparse Spherical k-Means for Document Clustering](https://arxiv.org/abs/2108.00895) that details some of the applied strategies.
 
 ## Setup
 
-The most convenient way of using the library is to install the package from [NuGet](https://www.nuget.org/packages/ESkMeansLib).
+The most convenient way of using the library is to install the package from [NuGet](https://www.nuget.org/packages/ESPkMeansLib).
 
 ## Getting Started
 
@@ -111,7 +111,7 @@ for (int i = 0; i < centroids.Length; i++)
 ```
 
 ## Python Examples
-The library targets .NET 6 onwards, but thanks to the [pythonnet](https://github.com/pythonnet/pythonnet) project you can also call it from your python code. Make sure that you have installed the [.NET runtime](https://dotnet.microsoft.com/en-us/download) (>= 6) and download the library (ESkMeansLib.dll).
+The library targets .NET 6 onwards, but thanks to the [pythonnet](https://github.com/pythonnet/pythonnet) project you can also call it from your python code. Make sure that you have installed the [.NET runtime](https://dotnet.microsoft.com/en-us/download) (>= 6) and download the library (ESPkMeansLib.dll).
 
 Install the required python packages (>= 3):
 
@@ -140,11 +140,11 @@ rt = get_coreclr("runtimeconfig.json")
 set_runtime(rt)
 #then we have to add a reference to the library
 import clr
-#absolute path of the ESkMeansLib library
-dll_path = os.path.abspath("./path/to/ESkMeansLib.dll")
+#absolute path of the ESPkMeansLib library
+dll_path = os.path.abspath("./path/to/ESPkMeansLib.dll")
 clr.AddReference(dll_path)
 #now we can import classes from the library
-from ESkMeansLib import KMeans
+from ESPkMeansLib import KMeans
 #it is also possible to import other .NET types
 from System import Array, Single, Int32, ValueTuple
 ```
@@ -182,7 +182,7 @@ sparse = centroids[0].ToSparse()
 arr = list(sparse.AsEnumerable())
 ```
 
-ES-kMeans was specifically designed to handle sparse data, that is, data vectors which are very high-dimensional but typically only have a few non-zero entries. Such vectors are internally stored as list of index-value pairs. Calling the method on sparse data will also return sparse centroids:
+ESP-kMeans was specifically designed to handle sparse data, that is, data vectors which are very high-dimensional but typically only have a few non-zero entries. Such vectors are internally stored as list of index-value pairs. Calling the method on sparse data will also return sparse centroids:
 
 ```python
 #===== RUN Spherical k-Means++ ON SPARSE DATA =====
@@ -257,7 +257,7 @@ for i in range(len(centroids)):
 
 
 ## License
-ES-kMeans is MIT licensed.
+ESP-kMeans is MIT licensed.
 
 If you use the library as part of your work, it would be great if you cite the following paper:
 

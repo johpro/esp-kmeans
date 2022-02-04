@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <Authors>Johannes Knittel</Authors>
+    <Company />
+    <Copyright>Copyright(c) Johannes Knittel</Copyright>
+    <PackageProjectUrl>https://github.com/johpro/esp-kmeans</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/johpro/esp-kmeans</RepositoryUrl>
+	  <Title>ESP-kMeans</Title>
+    <Description>ESP-kMeans is a fast, scalable, and easy-to-use clustering library with efficient implementations of k-Means++ and Spherical k-Means++.</Description>
+	  <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+</Project>

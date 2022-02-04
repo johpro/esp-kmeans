@@ -6,10 +6,10 @@ rt = get_coreclr("test.runtimeconfig.json")
 set_runtime(rt)
 #then we have to add a reference to the library
 import clr
-dll_path = os.path.abspath("../ESkMeansLib/bin/Release/net6.0/ESkMeansLib.dll")
+dll_path = os.path.abspath("../ESPkMeansLib/bin/Release/net6.0/ESPkMeansLib.dll")
 clr.AddReference(dll_path)
 #now we can import classes from the library
-from ESkMeansLib import KMeans
+from ESPkMeansLib import KMeans
 #it is also possible to import other .NET types
 from System import Array, Single, Int32, ValueTuple
 

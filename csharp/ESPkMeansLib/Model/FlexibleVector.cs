@@ -954,7 +954,7 @@ namespace ESPkMeansLib.Model
         /// both vectors need to have the same storage layout, i.e., both dense or both sparse
         /// </summary>
         /// <param name="other"></param>
-        /// <returns></returns>
+        /// <returns>cosine distance in the range [0,2]</returns>
         /// <exception cref="Exception"></exception>
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
@@ -962,8 +962,7 @@ namespace ESPkMeansLib.Model
         {
             if (!IsUnitVector || !other.IsUnitVector)
                 throw new Exception("only works with unit vectors");
-            var dot = DotProductWith(other); //between -1 and 1
-            return Math.Max(0, 1 - Math.Abs(dot));
+            return 1 - DotProductWith(other); 
         }
 
         /// <summary>
@@ -971,15 +970,14 @@ namespace ESPkMeansLib.Model
         /// Source vector has to have sparse storage layout.
         /// </summary>
         /// <param name="other"></param>
-        /// <returns></returns>
+        /// <returns>cosine distance in the range [0,2]</returns>
         /// <exception cref="Exception"></exception>
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         public float CosineDistanceWith(Dictionary<int, float> other)
         {
             if (!IsUnitVector)
                 throw new Exception("only works with unit vectors");
-            var dot = DotProductWith(other); //between -1 and 1
-            return Math.Max(0, 1 - Math.Abs(dot));
+            return 1- DotProductWith(other);
         }
 
         /// <summary>

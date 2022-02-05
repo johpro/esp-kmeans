@@ -15,15 +15,27 @@ using ESPkMeansLib.Model;
 namespace ESPkMeansLib.Helpers
 {
     /// <summary>
-    /// Indexing structure for unit-length vectors. Given a minimum dot product of Lambda, find all unit-length vectors that can have dot product of at least Lambda.
+    /// Indexing structure for unit-length vectors.
+    /// Given a minimum dot product of Lambda, retrieve all indexed unit-length vectors
+    /// that can have a dot product of at least Lambda with the query vector (of length smaller or equal 1).
+    /// The respective dot product of the returned vectors with the query may still be lower than the provided threshold,
+    /// but it is guaranteed that none of the remaining vectors in the index would match the query.
+    /// Several such Lambdas can be defined in the constructor to build a layered index.
+    /// Given a query vector and a lower bound of the dot product, the structure will then use the layer for retrieval
+    /// that has the highest threshold which is still equal to or below the lower bound, which makes retrieval operations
+    /// more efficient.
+    /// Please note that this indexing structure was designed for dot products in the range (0,1], which is typical for
+    /// text representations that only have positive or zero vector entries, for instance.
+    /// That is, it is not possible to retrieve vectors based on a negative threshold (for instance, >= -0.1).
+    /// A threshold of zero thus implies an actual threshold of zero+epsilon.
     /// </summary>
     public class DotProductIndexedVectors
     {
-        
+
         public float MinDotProduct { get; }
         public int VectorsCount { get; private set; }
         public int MaxId { get; private set; }
-        
+
 
         class DotProductThItem
         {
@@ -33,7 +45,7 @@ namespace ESPkMeansLib.Helpers
             /// we get at least required dot product.
             /// </summary>
             public readonly Dictionary<int, List<(int id, int minNumOccurrences)>> TokenToVectorsMap = new();
-            
+
 
             public float MinDotProduct;
             public float MinDotProductSquared;
@@ -53,18 +65,26 @@ namespace ESPkMeansLib.Helpers
         private readonly bool _hasOnlyZeroThreshold;
         private readonly DotProductThItem[] _map;
         private readonly Dictionary<int, List<int>> _globalMap = new();
+        private readonly Dictionary<int, FlexibleVector> _indexedVectors = new();
 
         private readonly ConcurrentBag<HashSet<int>> _vectorHashSetBag = new();
         private readonly ConcurrentBag<Dictionary<int, int>> _vectorDictionaryBag = new();
+        private readonly ConcurrentBag<List<int>> _intListBag = new();
         private static readonly Dictionary<int, int> EmptyDict = new(0);
 
         public int DebugTotalMissed { get; set; }
 
-
+        /// <summary>
+        /// Create indexing structure based on default thresholds (0.1, 0.25, 0.4f, and 0.6).
+        /// </summary>
         public DotProductIndexedVectors() : this(new[] { 0.1f, 0.25f, 0.4f, 0.6f })
         {
         }
 
+        /// <summary>
+        /// Create indexing structure.
+        /// </summary>
+        /// <param name="minDotProductValues">One or several dot product thresholds (>= 0) that should be used for indexing the vectors</param>
         public DotProductIndexedVectors(float[] minDotProductValues)
         {
             /*
@@ -99,11 +119,13 @@ namespace ESPkMeansLib.Helpers
 
             Array.Sort(minDotProductValues1);
             MinDotProduct = minDotProductValues1[0];
-            
+
             _map = new DotProductThItem[minDotProductValues1.Length];
             for (int i = 0; i < _map.Length; i++)
             {
                 var minDotProduct = minDotProductValues1[i];
+                if (minDotProduct < 0)
+                    throw new ArgumentException("indexing structure does not support negative dot product threshold");
                 _map[i] = new DotProductThItem
                 {
                     MinDotProduct = minDotProduct,
@@ -114,10 +136,11 @@ namespace ESPkMeansLib.Helpers
         }
 
         /// <summary>
-        /// Clear index
+        /// Clear the index
         /// </summary>
         public void Clear()
         {
+            _indexedVectors.Clear();
             foreach (var dict in _map)
             {
                 dict.Clear();
@@ -133,13 +156,14 @@ namespace ESPkMeansLib.Helpers
 
 
         /// <summary>
-        /// Clear index and add all vectors in array to index, using the array position as ID
+        /// Clear the index and add all provided vectors to the index, using the position in the array as identifier
         /// </summary>
-        /// <param name="vectors"></param>
+        /// <param name="vectors">The vectors to add</param>
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         public void Set(FlexibleVector[] vectors)
         {
             Clear();
+            _indexedVectors.EnsureCapacity(vectors.Length);
             for (var i = 0; i < vectors.Length; i++)
             {
                 Add(vectors[i], i);
@@ -147,8 +171,7 @@ namespace ESPkMeansLib.Helpers
         }
 
         /// <summary>
-        /// Add vector v to index. A unique ID has to be provided, which will be returned on querying the index
-        /// (the vectors are not stored).
+        /// Add provided unit-length vector to the index. A unique identifier has to be provided as well, which will be returned on querying the index.
         /// </summary>
         /// <param name="v">Vector to add</param>
         /// <param name="id">Unique number to identify vector</param>
@@ -164,6 +187,7 @@ namespace ESPkMeansLib.Helpers
                 throw new ArgumentException("vector has to have length 1");
             VectorsCount++;
             MaxId = Math.Max(MaxId, id);
+            _indexedVectors.Add(id, v);
             if (_hasOnlyZeroThreshold)
             {
                 //we just add all tokens
@@ -298,14 +322,98 @@ namespace ESPkMeansLib.Helpers
 
         }
 
+        /// <summary>
+        /// Retrieve corresponding vector from index
+        /// </summary>
+        /// <param name="id">identifier of the vector</param>
+        /// <returns></returns>
+        public FlexibleVector GetVectorById(int id)
+        {
+            return _indexedVectors[id];
+        }
+
+        /// <summary>
+        /// Retrieve k nearest neighbors from index (can be fewer than k), sorted in descending order of similarity.
+        /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
+        /// A threshold > 0 (<paramref name="minDotProduct"/>) can be defined
+        /// to ignore neighbors that are too far away.
+        /// </summary>
+        /// <param name="vector">The vector whose neighbors should be retrieved</param>
+        /// <param name="k">The number of neighbors to retrieve</param>
+        /// <param name="minDotProduct">Threshold to ignore distant vectors (actual dot product may still be lower)</param>
+        /// <returns>Corresponding identifiers of the k (or fewer) nearest neighbors.</returns>
+        /// <exception cref="ArgumentException"></exception>
+        public int[] GetKNearestVectors(FlexibleVector vector, int k, float minDotProduct = 0)
+        {
+            if (minDotProduct < 0)
+                throw new ArgumentException("indexing structure does not support negative dot product threshold");
+            if (k <= 0)
+                return Array.Empty<int>();
+
+            if (_intListBag.TryTake(out var vecList))
+                vecList.Clear();
+            else
+                vecList = new List<int>(k);
+            try
+            {
+                var lowerLimit = _map[0].MinDotProduct <= float.Epsilon ? 0 : -1;
+                for (int i = _map.Length - 1; i >= lowerLimit; i--)
+                {
+                    var th = lowerLimit < 0 ? 0 : _map[i].MinDotProduct;
+                    var isLastBody = i == lowerLimit || th <= minDotProduct;
+                    vecList.Clear();
+                    foreach (var id in GetNearbyVectors(vector, th))
+                    {
+                        vecList.Add(id);
+                    }
+                    if (!isLastBody && vecList.Count < k)
+                        continue;
+                    if (vecList.Count == 0)
+                        return Array.Empty<int>();
+                    var cosDistanceList = ArrayPool<float>.Shared.Rent(vecList.Count);
+                    var numAboveTh = 0;
+                    for (int j = 0; j < vecList.Count; j++)
+                    {
+                        var dp = vector.DotProductWith(_indexedVectors[vecList[j]]);
+                        cosDistanceList[j] = 1 - dp;
+                        if (dp >= th)
+                            numAboveTh++;
+                    }
+
+                    if (!isLastBody && numAboveTh < k)
+                    {
+                        //cannot guarantee that entries below th belong to the nearest neighbors
+                        ArrayPool<float>.Shared.Return(cosDistanceList);
+                        continue;
+                    }
+
+                    var idList = ArrayPool<int>.Shared.Rent(vecList.Count);
+                    vecList.CopyTo(idList);
+                    Array.Sort(cosDistanceList, idList, 0, vecList.Count);
+                    var numRes = Math.Min(k, numAboveTh);
+                    var res = new int[numRes];
+                    Array.Copy(idList, res, res.Length);
+                    ArrayPool<float>.Shared.Return(cosDistanceList);
+                    ArrayPool<int>.Shared.Return(idList);
+                    return res;
+                }
+
+                return Array.Empty<int>();
+            }
+            finally
+            {
+                _intListBag.Add(vecList);
+            }
+        }
+
 
 
         /// <summary>
-        /// Retrieve such vector ids that can lead to dot product >= MinDotProduct with query <paramref name="vector"/>.
-        /// Only valid if provided <paramref name="vector"/> has length equal to or smaller than 1.
+        /// Retrieve all indexed vector ids that can lead to a dot product >= MinDotProduct with the query <paramref name="vector"/>.
+        /// Only valid if the provided <paramref name="vector"/> has length equal to or smaller than 1.
         /// Actual dot product can also be smaller.
         /// </summary>
-        /// <param name="vector">the query vector</param>
+        /// <param name="vector">The query vector</param>
         /// <returns>Enumeration of found vector IDs</returns>
         public IEnumerable<int> GetNearbyVectors(FlexibleVector vector)
         {
@@ -314,12 +422,12 @@ namespace ESPkMeansLib.Helpers
 
 
         /// <summary>
-        /// Retrieve such vector ids that can lead to dot product >= <param name="minDotProduct"></param> with query <paramref name="vector"/>.
+        /// Retrieve all indexed vector ids that can lead to a dot product >= <param name="minDotProduct"></param> with the query <paramref name="vector"/>.
         /// Only valid if provided <paramref name="vector"/> has length equal to or smaller than 1.
         /// Actual dot product can also be smaller.
         /// </summary>
         /// <param name="vector">the query vector</param>
-        /// <param name="minDotProduct">the lower bound of the dot product</param>
+        /// <param name="minDotProduct">the lower bound of the dot product, has to be greater or equal 0</param>
         /// <returns>Enumeration of found vector IDs</returns>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public IEnumerable<int> GetNearbyVectors(FlexibleVector vector, float minDotProduct)
@@ -328,7 +436,7 @@ namespace ESPkMeansLib.Helpers
                 vector = vector.ToSparse();
 
             if (minDotProduct < 0)
-                throw new ArgumentException("minimum dot product must not be negative");
+                throw new ArgumentException("indexing structure does not support negative dot product threshold");
 
             if (vector.Length == 0)
                 return Enumerable.Empty<int>();
@@ -400,7 +508,7 @@ namespace ESPkMeansLib.Helpers
             {
                 yield return k;
             }
-            
+
             if (countDict != EmptyDict)
             {
                 countDict.Clear();
@@ -418,7 +526,7 @@ namespace ESPkMeansLib.Helpers
                 yield break;
             foreach ((int id, int minNumOccurrences) in l)
             {
-                if(minNumOccurrences > 1)
+                if (minNumOccurrences > 1)
                     continue;
                 yield return id;
             }

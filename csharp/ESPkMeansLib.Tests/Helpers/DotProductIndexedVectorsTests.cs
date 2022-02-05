@@ -1,6 +1,9 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using ESPkMeansLib.Helpers;
+using ESPkMeansLib.Model;
 using ESPkMeansLib.Tests.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -9,12 +12,53 @@ namespace ESPkMeansLib.Tests.Helpers
     [TestClass]
     public class DotProductIndexedVectorsTests
     {
-        [TestMethod]
-        public void DotProductIndexedVectorsTest()
+        private static (List<FlexibleVector> queryVectors, FlexibleVector[] indexVectors) CreateQueryAndIndexVectors(int nInitQuery = 10, int nIndex = 1_000)
         {
-            var queryVectors = FlexibleVectorTests.CreateRandomVectors(10, true);
-            var indexVectors = FlexibleVectorTests.CreateRandomVectors(4_000, true)
-                .Where(v => v.Length >= 1).ToArray();
+            var queryVectors = FlexibleVectorTests.CreateRandomVectors(nInitQuery, true).ToList();
+            var indexVectors = FlexibleVectorTests.CreateRandomVectors(nIndex, true)
+                .Where(v => v.Length >= 1).ToList();
+
+            var rnd = new Random(59649269);
+            for (int r = 0; r < 10; r++)
+            {
+                for (int i = 0; i < nInitQuery; i++)
+                {
+                    var d = queryVectors[i].ToDictionary();
+                    var keys = d.Keys.ToArray();
+                    foreach (var k in keys)
+                    {
+                        var mode = rnd.Next(10);
+                        switch (mode)
+                        {
+                            default:
+                                break;
+                            case 0:
+                                d.Remove(k);
+                                break;
+                            case 1:
+                            case 2:
+                            case 3:
+                                var diff = (float)(rnd.NextDouble() *  - .5);
+                                d[k] += diff;
+                                break;
+                        }
+
+                        var toAdd = rnd.Next(9);
+                        for (int j = 0; j < toAdd; j++)
+                        {
+                            int idx;
+                            do
+                            {
+                                idx = rnd.Next(100_000);
+                            } while (d.ContainsKey(idx));
+                            d.Add(idx, (float)(rnd.NextDouble() * 20 - 10));
+                        }
+                    }
+                    if (d.Count == 0)
+                        continue;
+                    indexVectors.Add(new FlexibleVector(d));
+                }
+            }
 
             foreach (var v in queryVectors)
             {
@@ -24,6 +68,13 @@ namespace ESPkMeansLib.Tests.Helpers
             {
                 v.NormalizeAsUnitVector();
             }
+            return (queryVectors, indexVectors.ToArray());
+        }
+        [TestMethod]
+        public void DotProductIndexedVectorsTest()
+        {
+
+            var (queryVectors, indexVectors) = CreateQueryAndIndexVectors();
 
             var thresholds = new[] { 0.05f, 0.25f, 0.4f, 0.6f };
 
@@ -64,47 +115,58 @@ namespace ESPkMeansLib.Tests.Helpers
             }
 
         }
+        
 
         [TestMethod]
-        public void DotProductIndexedVectorsTest1()
+        public void GetKNearestNeighborsTest()
         {
-            Assert.Fail();
+            var (queryVectors, indexVectors) = CreateQueryAndIndexVectors();
+            var db = new DotProductIndexedVectors();
+            db.Set(indexVectors);
+            var thresholds = new[] { 0, 1, 3, 5, 8, 11, 20, 100, 10_000 };
+            foreach (var v in queryVectors)
+            {
+                foreach (var k in thresholds)
+                {
+                    if (v.Length == 0 || k == 0)
+                    {
+                        Assert.AreEqual(0, db.GetKNearestVectors(v, k).Length);
+                        continue;
+                    }
+
+                    var groundTruth = indexVectors.OrderByDescending(v2 => v.DotProductWith(v2))
+                        .Take(k)
+                        .Where(v2 => v.DotProductWith(v2) > 0)
+                        .ToArray();
+
+                    var res = db.GetKNearestVectors(v, k);
+                    Trace.WriteLine($"k {k}: {res.Length} / {groundTruth.Length}");
+                    Assert.AreEqual(groundTruth.Length, res.Length);
+                    Assert.AreEqual(res.Length, res.Select(id => db.GetVectorById(id)).Intersect(groundTruth).Count());
+                }
+                Trace.WriteLine("");
+            }
         }
+        
 
         [TestMethod]
-        public void ClearTest()
+        public unsafe void SquareTest()
         {
-            Assert.Fail();
-        }
+            var vecs = FlexibleVectorTests.CreateRandomVectors(100, false)
+                .Select(v => v.Values.ToArray()).ToArray();
 
-        [TestMethod]
-        public void SetTest()
-        {
-            Assert.Fail();
-        }
+            foreach (var vec in vecs)
+            {
+                var res = new float[vec.Length];
+                fixed(float* v = vec, v2 = res)
+                    DotProductIndexedVectors.Square(res.Length, v, v2);
+                for (int i = 0; i < res.Length; i++)
+                {
+                    Assert.AreEqual(vec[i]*vec[i], res[i], 0.0001f);
+                }
+            }
+            
 
-        [TestMethod]
-        public void AddTest()
-        {
-            Assert.Fail();
-        }
-
-        [TestMethod]
-        public void GetNearbyVectorsTest()
-        {
-            Assert.Fail();
-        }
-
-        [TestMethod]
-        public void GetNearbyVectorsTest1()
-        {
-            Assert.Fail();
-        }
-
-        [TestMethod]
-        public void SquareTest()
-        {
-            Assert.Fail();
         }
     }
 }

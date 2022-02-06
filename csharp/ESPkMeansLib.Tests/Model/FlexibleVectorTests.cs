@@ -11,6 +11,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using ESPkMeansLib.Helpers;
 using ESPkMeansLib.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -649,6 +650,31 @@ namespace ESPkMeansLib.Tests.Model
                 {
                     Trace.WriteLine(v);
                 }
+            }
+        }
+
+        [TestMethod]
+        public void ToJsonTest()
+        {
+            var setS = CreateRandomVectors(3, true);
+            var setD = CreateRandomVectors(3, false);
+            foreach (var v in setD.Concat(setS))
+            {
+                var json = v.ToJson();
+                Trace.WriteLine(json);
+                var v2 = FlexibleVector.FromJson(json);
+                Assert.IsTrue(v.ValueEquals(v2));
+                using (var ms = new MemoryStream())
+                {
+                    using (var writer = new Utf8JsonWriter(ms))
+                        v.ToJsonWriter(writer);
+                    var bytes = ms.ToArray();
+                    json = Encoding.UTF8.GetString(bytes);
+
+                }
+                Trace.WriteLine(json);
+                v2 = FlexibleVector.FromJson(json);
+                Assert.IsTrue(v.ValueEquals(v2));
             }
         }
         

@@ -5,11 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using ESPkMeansLib.Helpers;
 
@@ -39,7 +41,9 @@ namespace ESPkMeansLib.Model
 
         internal int Tag { get; set; }
 
+        
         private readonly int[]? _indexes;
+        
         private readonly float[] _values;
 
         private volatile bool _isUnitVectorSet;
@@ -1410,6 +1414,54 @@ namespace ESPkMeansLib.Model
             return res;
         }
 
+        /// <summary>
+        /// Create vector from JSON string.
+        /// </summary>
+        /// <param name="json"></param>
+        /// <returns></returns>
+        public static FlexibleVector FromJson(string json)
+        {
+            var storage = JsonSerializer.Deserialize<FlexibleVectorStorage>(json);
+            return new FlexibleVector(storage.Indexes, storage.Values);
+        }
+
+        /// <summary>
+        /// Converts vector into a JSON representation.
+        /// </summary>
+        /// <param name="options"></param>
+        /// <returns></returns>
+        public string ToJson(JsonSerializerOptions? options = null)
+        {
+            return JsonSerializer.Serialize(new FlexibleVectorStorage(_indexes,  _values), options);
+        }
+
+        /// <summary>
+        /// Writes vector to a Utf8JsonWriter.
+        /// </summary>
+        /// <param name="writer"></param>
+        public void ToJsonWriter(Utf8JsonWriter writer)
+        {
+            writer.WriteStartObject();
+            if (_indexes != null)
+            {
+                writer.WriteStartArray("Indexes");
+                foreach (var index in _indexes)
+                {
+                    writer.WriteNumberValue(index);
+                }
+                writer.WriteEndArray();
+            }
+            writer.WriteStartArray("Values");
+            foreach (var val in _values)
+            {
+                writer.WriteNumberValue(val);
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        
+
         public override string ToString()
         {
             const int numVals = 3;
@@ -1434,8 +1486,21 @@ namespace ESPkMeansLib.Model
         {
             return string.Join(", ", vals.Select(p => $"({p.idx}, {p.val.ToString(CultureInfo.InvariantCulture)})"));
         }
+
+        
     }
 
+    internal class FlexibleVectorStorage
+    {
+        public FlexibleVectorStorage(int[]? indexes, float[] values)
+        {
+            Indexes = indexes;
+            Values = values;
+        }
+
+        public int[]? Indexes { get; set; }
+        public float[] Values { get; set; }
+    }
 
     internal static class HashHelpers
     {

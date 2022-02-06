@@ -11,6 +11,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using ESPkMeansLib.Helpers;
 using ESPkMeansLib.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -434,22 +435,26 @@ namespace ESPkMeansLib.Tests.Model
         {
             var sets = new List<FlexibleVector[]>
             {
-                CreateRandomVectors(10, true),
                 CreateRandomVectors(1, false, 0),
-                CreateRandomVectors(3, false, 1),
-                CreateRandomVectors(3, false, 10),
-                CreateRandomVectors(3, false, 1000)
+                CreateRandomVectors(5, false, 1),
+                CreateRandomVectors(5, false, 10),
+                CreateRandomVectors(5, false, 1000),
+                CreateRandomVectors(20, true)
             };
 
+            var watch = new Stopwatch();
             foreach (var set in sets)
             {
+                watch.Reset();
                 for (var i = 0; i < set.Length; i++)
                 {
                     var v1 = set[i];
                     for (int j = 0; j < set.Length; j++)
                     {
                         var v2 = set[j];
+                        watch.Start();
                         var product = v1.DotProductWith(v2);
+                        watch.Stop();
                         Assert.AreEqual(SimpleDotProduct(v1, v2), product, 0.1f);
                         if(!v1.IsSparse)
                             continue;
@@ -458,6 +463,7 @@ namespace ESPkMeansLib.Tests.Model
                         Assert.AreEqual(SimpleDotProduct(v1, v2), product, 0.1f);
                     }
                 }
+                Trace.WriteLine(watch.Elapsed);
             }
         }
         

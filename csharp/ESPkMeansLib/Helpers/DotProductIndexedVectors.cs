@@ -8,6 +8,7 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using ESPkMeansLib.Model;
@@ -464,7 +465,7 @@ namespace ESPkMeansLib.Helpers
                 hashSet = new HashSet<int>();
 
             var vecLen = vector.Length;
-
+            var indexes = vector.Indexes;
             var countDict = EmptyDict;
             if (!_hasOnlyZeroThreshold)
             {
@@ -473,27 +474,30 @@ namespace ESPkMeansLib.Helpers
                     countDict.Clear();
                 else
                     countDict = new();
-
-                for (int j = 0; j < vector.Indexes.Length; j++)
+                for (int j = 0; j < indexes.Length; j++)
                 {
-                    var idx = vector.Indexes[j];
+                    var idx = indexes[j];
                     if (_globalMap.TryGetValue(idx, out var list) && list.Count != 0)
                     {
-                        foreach (var k in list)
+                        //unsafe iteration since foreach loops over collections are not lowered to for loops
+                        var l = CollectionsMarshal.AsSpan(list);
+                        for (int i = 0; i < l.Length; i++)
                         {
-                            countDict.IncrementItem(k);
+                            countDict.IncrementItem(l[i]);
                         }
                     }
                 }
             }
 
-            for (int j = 0; j < vector.Indexes.Length; j++)
+            for (int j = 0; j < indexes.Length; j++)
             {
-                var idx = vector.Indexes[j];
+                var idx = indexes[j];
                 if (map.TokenToVectorsMap.TryGetValue(idx, out var vecList) && vecList.Count != 0)
                 {
-                    foreach (var (id, minNumOccurrences) in vecList)
+                    var vecSpan = CollectionsMarshal.AsSpan(vecList);
+                    for (int i = 0; i < vecSpan.Length; i++)
                     {
+                        var (id, minNumOccurrences) = vecSpan[i];
                         if (minNumOccurrences == 1 || minNumOccurrences <= vecLen && countDict[id] >= minNumOccurrences)
                         {
                             hashSet.Add(id);

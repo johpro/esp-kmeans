@@ -70,12 +70,20 @@ namespace ESPkMeansLib.Tests
                 Trace.WriteLine($"CLUSTER {i} | {clusterCounts[i]} items | {GetClusterDescription(centroids[i], elske)}");
             }
 
+        }    [TestMethod]
+        public void ClusterArxivVerboseTest()
+        {
+            const int numClusters = 500;
+            var set = TestSet.LoadArxiv100K();
+            var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true, EnableVerboseLogging = true};
+            var (clustering, centroids) = kmeans.Cluster(set.Data!, numClusters, 1);
+
         }
 
         [TestMethod]
         public void ClusterArxivBenchmarkTest()
         {
-            const int numRuns = 2;
+            const int numRuns = 5;
             var set = TestSet.LoadArxiv100K();
             var kmeans = new KMeans { UseSphericalKMeans = true };
             foreach (var numClusters in new[]{100, 1_000})

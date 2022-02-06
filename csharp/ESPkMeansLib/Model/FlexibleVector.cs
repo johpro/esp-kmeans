@@ -304,7 +304,7 @@ namespace ESPkMeansLib.Model
             var numBuckets = (uint)HashHelpers.GetPrime(indexes.Length);
             var fastModMult = HashHelpers.GetFastModMultiplier(numBuckets);
             var buckets = new int[numBuckets];
-
+            
             fixed (int* bucketsPtr = buckets)
             {
                 var distinctCount = 0;
@@ -320,6 +320,11 @@ namespace ESPkMeansLib.Model
                     *h = prev - 1;
                 }
                 //Trace.WriteLine($"{numBuckets} buckets");
+                //for each index with hash collision we need to store header for respective hash (1) + actual indexes 
+                //number of distinct hashes: distinctCount
+                //number of hashes that have more than one target ("num groups"): numHashesWithCollisions
+                //number of indexes that do not cause collision: distinctCount - numHashesWithCollisions
+                //number of indexes that lead to such collisions: indexes.Length - (distinctCount - numHashesWithCollisions)
                 var entries = new int[2 * numHashesWithCollisions + indexes.Length - distinctCount + 1];
 
                 fixed (int* entriesPtr = entries, indexesPtr= indexes)
@@ -335,7 +340,7 @@ namespace ESPkMeansLib.Model
                         {
                             if (prev == -1)
                             {
-                                //no collision, only one target index, we can store it in entries
+                                //no collision, only one target index, we can store it in bucket
                                 *h = ~i;
                             }
                             else
@@ -356,7 +361,6 @@ namespace ESPkMeansLib.Model
                             //the following entries refer to the index in the indexes array that belong to this bucket
                             var entriesHeader = entriesPtr + prev;
                             var curCount = *entriesHeader + 1;
-
                             //now first do some sanity checks that the list of indexes is unique
                             var lim = entriesHeader + curCount;
                             for (var ptr = entriesHeader+1; ptr < lim; ptr++)
@@ -500,8 +504,8 @@ namespace ESPkMeansLib.Model
         private static bool TryGetValue(int idx, int* buckets, int* indexes, int* entries, float* values,
             uint bucketsLen, ulong fastModMul, out float val)
         {
-            if (bucketsLen == 0)
-                throw new InvalidOperationException("length of buckets must be greater than zero");
+            //if (bucketsLen == 0)
+            //    throw new InvalidOperationException("length of buckets must be greater than zero");
             int pos;
             var mod = HashHelpers.FastMod((uint)idx, bucketsLen, fastModMul);
             var entriesIdx = buckets[mod];
@@ -524,7 +528,7 @@ namespace ESPkMeansLib.Model
             var ptrToHeader = entries + entriesIdx;
             var ptr = ptrToHeader + 1;
             var endPtr = ptr + *ptrToHeader;
-
+            
             for (; ptr < endPtr; ptr++)
             {
                 pos = *ptr;
@@ -1027,9 +1031,8 @@ namespace ESPkMeansLib.Model
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private float InternalSparseDotProductWithBigVec(FlexibleVector other)
         {
-            double sumAb = 0.0;
             var aArr = _indexes;
-            if (aArr.Length == 0)
+            if (aArr!.Length == 0)
                 return 0;
             //we need this switch as we must not call pointer-based TryGetValue overload if bucket size is 0
             switch (other.Indexes.Length)
@@ -1043,8 +1046,12 @@ namespace ESPkMeansLib.Model
                     return _values.DangerousGetReferenceAt(0) * other._values.DangerousGetReferenceAt(0);
             }
 
+            double sumAb = 0.0;
             var fastModMul = other._fastModMult;
             var bucketsLen = (uint)other._buckets.Length;
+            if (bucketsLen == 0)
+                throw new InvalidOperationException("length of buckets must be greater than zero");
+
             fixed (float* valuesPtr = _values, otherValuesPtr = other._values)
             fixed (int* otherBuckets = other._buckets, otherIndexes = other._indexes,
                 otherEntries = other._entries)

@@ -1337,6 +1337,93 @@ namespace ESPkMeansLib.Model
         }
 
         /// <summary>
+        /// Dump vector to file. The file will be compressed as GZIP archive if the specified file name ends with ".gz".
+        /// </summary>
+        /// <param name="fn">target path</param>
+        public void ToFile(string fn)
+        {
+            ToFile(fn, fn.EndsWith(".gz", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Dump vector to a file.
+        /// </summary>
+        /// <param name="fn">target path</param>
+        /// <param name="useGzipCompression">whether to use GZIP compression</param>
+        public void ToFile(string fn, bool useGzipCompression)
+        {
+            using var w = StorageHelper.GetWriter(fn, useGzipCompression);
+            ToWriter(w);
+        }
+
+        /// <summary>
+        /// Dump vectors to file. The file will be compressed as GZIP archive if the specified file name ends with ".gz".
+        /// </summary>
+        /// <param name="arr">vectors to dump</param>
+        /// <param name="fn">target path</param>
+        public static void ToFile(FlexibleVector[] arr, string fn)
+        {
+            ToFile(arr, fn, fn.EndsWith(".gz", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Dump vectors to a file.
+        /// </summary>
+        /// <param name="arr">vectors to dump</param>
+        /// <param name="fn">target path</param>
+        /// <param name="useGzipCompression">whether to use GZIP compression</param>
+        public static void ToFile(FlexibleVector[] arr, string fn, bool useGzipCompression)
+        {
+            using var w = StorageHelper.GetWriter(fn, useGzipCompression);
+            ToWriter(arr, w);
+        }
+
+        /// <summary>
+        /// Load vector from dump. If the file name ends with ".gz" the file will be decompressed.
+        /// </summary>
+        /// <param name="fn"></param>
+        /// <returns></returns>
+        public static FlexibleVector FromFile(string fn)
+        {
+            return FromFile(fn, fn.EndsWith(".gz", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Load vector from dump.
+        /// </summary>
+        /// <param name="fn">file path</param>
+        /// <param name="decompressGzip">whether to decompress file</param>
+        /// <returns></returns>
+        public static FlexibleVector FromFile(string fn, bool decompressGzip)
+        {
+            using var r = StorageHelper.GetReader(fn, decompressGzip);
+            return FromReader(r);
+        }
+
+
+        /// <summary>
+        /// Load vectors from dump. If the file name ends with ".gz" the file will be decompressed.
+        /// </summary>
+        /// <param name="fn"></param>
+        /// <returns></returns>
+        public static FlexibleVector[] ArrayFromFile(string fn)
+        {
+            return ArrayFromFile(fn, fn.EndsWith(".gz", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Load vectors from dump.
+        /// </summary>
+        /// <param name="fn">file path</param>
+        /// <param name="decompressGzip">whether to decompress file</param>
+        /// <returns></returns>
+        public static FlexibleVector[] ArrayFromFile(string fn, bool decompressGzip)
+        {
+            using var r = StorageHelper.GetReader(fn, decompressGzip);
+            return ArrayFromReader(r);
+        }
+
+        /// <summary>
         /// Dump vector using provided writer.
         /// </summary>
         /// <param name="writer"></param>
@@ -1360,6 +1447,20 @@ namespace ESPkMeansLib.Model
                 {
                     writer.Write(v);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Dump vectors to writer.
+        /// </summary>
+        /// <param name="arr"></param>
+        /// <param name="writer"></param>
+        public static void ToWriter(FlexibleVector[] arr, BinaryWriter writer)
+        {
+            writer.Write(arr.Length);
+            foreach (var v in arr)
+            {
+                v.ToWriter(writer);
             }
         }
 

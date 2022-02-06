@@ -6,9 +6,12 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using ElskeLib.Utils;
 using ESPkMeansLib.Helpers;
@@ -70,7 +73,9 @@ namespace ESPkMeansLib.Tests
                 Trace.WriteLine($"CLUSTER {i} | {clusterCounts[i]} items | {GetClusterDescription(centroids[i], elske)}");
             }
 
-        }    [TestMethod]
+        }
+        
+        [TestMethod]
         public void ClusterArxivVerboseTest()
         {
             const int numClusters = 500;
@@ -111,6 +116,55 @@ namespace ESPkMeansLib.Tests
                 Trace.WriteLine($"{watch.Elapsed / numRuns} | NCC+INDEX");
             }
         }
+
+        [TestMethod]
+        public void ClusterArxivNeighborGraphTest()
+        {
+            const int numClusters = 100;
+            const int numRuns = 5;
+            const int numNeighbors = 20;
+            const float dpTh = 0.1f;
+            var set = TestSet.LoadArxiv100K();
+            Trace.WriteLine("test set loaded");
+            var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true };
+            var (clustering, centroids) = kmeans.Cluster(set.Data!, numClusters, numRuns);
+            Trace.WriteLine("clustering done");
+            var counts = KMeans.GetClusterCounts(clustering, centroids.Length);
+            var elske = KeyphraseExtractor.FromFile("datasets/arxiv_100k.elske");
+            Trace.WriteLine("elske loaded");
+            var descriptions = centroids.Select(c => GetClusterDescription(c, elske, false)).ToArray();
+
+            var db = new DotProductIndexedVectors();
+            db.Set(centroids);
+            Trace.WriteLine("indexing db set");
+
+            var neighborGraph = new int[numClusters][];
+
+            for (int i = 0; i < centroids.Length; i++)
+            {
+                var c = centroids[i];
+                var neighbors = db.GetKNearestVectors(c, numNeighbors, dpTh);
+                neighborGraph[i] = neighbors;
+                Trace.WriteLine(descriptions[i]);
+                foreach (var id in neighbors)
+                {
+                    if(id == i)
+                        continue;
+                    Trace.WriteLine($"\t-> {descriptions[id]} \t({c.DotProductWith(centroids[id]):f2})");
+                }
+                Trace.WriteLine("");
+            }
+
+            var fn = $"{set.Name}-neighbors.{numClusters}c-{numNeighbors}n-{numRuns}r.";
+            FlexibleVector.ToFile(centroids, fn + "vectors.bin.gz");
+            File.WriteAllText(fn + "graph.json", JsonSerializer.Serialize(new
+            {
+                ClusterCounts = counts,
+                Graph = neighborGraph
+            }));
+
+        }
+
 
         [TestMethod()]
         public void EnsureUnitVectorsTest()
@@ -209,7 +263,7 @@ namespace ESPkMeansLib.Tests
              */
         }
 
-        private static string GetClusterDescription(FlexibleVector centroid, KeyphraseExtractor elske)
+        private static string GetClusterDescription(FlexibleVector centroid, KeyphraseExtractor elske, bool includeWeights = true)
         {
             if (centroid.Length == 0)
                 return "";
@@ -224,7 +278,7 @@ namespace ESPkMeansLib.Tests
                 var token = elske.ReferenceIdxMap.GetToken(idx);
                 if (sb.Length > 0)
                     sb.Append(", ");
-                sb.Append($"{token} ({val})");
+                sb.Append(includeWeights ? $"{token} ({val})" : token);
             }
 
             if (indexes.Length > 5)

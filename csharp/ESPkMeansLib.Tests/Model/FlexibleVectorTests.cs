@@ -614,6 +614,11 @@ namespace ESPkMeansLib.Tests.Model
         {
             var setS = CreateRandomVectors(10, true);
             var setD = CreateRandomVectors(10, false);
+
+
+            const string tempFn = "lmasfdk482352.bin";
+            const string tempFnGz = tempFn + ".gz";
+
             foreach (var set in new[] { setS, setD })
             {
                 foreach (var v in set)
@@ -633,7 +638,52 @@ namespace ESPkMeansLib.Tests.Model
                             Assert.IsTrue(v.ValueEquals(v2));
                         }
                     }
+
+                    try
+                    {
+                        v.ToFile(tempFn);
+                        var v2 = FlexibleVector.FromFile(tempFn);
+                        Assert.IsTrue(v.ValueEquals(v2));
+
+                        v.ToFile(tempFnGz);
+                        v2 = FlexibleVector.FromFile(tempFnGz);
+                        Assert.IsTrue(v.ValueEquals(v2));
+                    }
+                    finally
+                    {
+                        if(File.Exists(tempFn))
+                            File.Delete(tempFn);
+                        if (File.Exists(tempFnGz))
+                            File.Delete(tempFnGz);
+                    }
                 }
+
+                try
+                {
+                    FlexibleVector.ToFile(set, tempFn);
+                    var set2 = FlexibleVector.ArrayFromFile(tempFn);
+                    Assert.AreEqual(set.Length, set2.Length);
+                    for (int i = 0; i < set.Length; i++)
+                    {
+                        Assert.IsTrue(set[i].ValueEquals(set2[i]));
+                    }
+
+                    FlexibleVector.ToFile(set, tempFnGz);
+                    set2 = FlexibleVector.ArrayFromFile(tempFnGz);
+                    Assert.AreEqual(set.Length, set2.Length);
+                    for (int i = 0; i < set.Length; i++)
+                    {
+                        Assert.IsTrue(set[i].ValueEquals(set2[i]));
+                    }
+                }
+                finally
+                {
+                    if (File.Exists(tempFn))
+                        File.Delete(tempFn);
+                    if (File.Exists(tempFnGz))
+                        File.Delete(tempFnGz);
+                }
+
             }
 
             

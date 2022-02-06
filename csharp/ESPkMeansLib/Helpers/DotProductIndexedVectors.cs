@@ -360,7 +360,7 @@ namespace ESPkMeansLib.Helpers
                 var lowerLimit = _map[0].MinDotProduct <= float.Epsilon ? 0 : -1;
                 for (int i = _map.Length - 1; i >= lowerLimit; i--)
                 {
-                    var th = lowerLimit < 0 ? 0 : _map[i].MinDotProduct;
+                    var th = i < 0 ? 0 : _map[i].MinDotProduct;
                     var isLastBody = i == lowerLimit || th <= minDotProduct;
                     vecList.Clear();
                     foreach (var id in GetNearbyVectors(vector, th))

@@ -143,7 +143,8 @@ namespace ESPkMeansLib.Model
 
         /// <summary>
         /// Create dense vector from array. IMPORTANT: underlying storage will be shared,
-        /// i.e., changes to array are reflected here as well
+        /// i.e., changes to array are reflected here as well, which might lead to wrong or
+        /// stale behavior.
         /// </summary>
         /// <param name="denseVector"></param>
         public FlexibleVector(float[] denseVector) : this(null, denseVector)
@@ -213,6 +214,21 @@ namespace ESPkMeansLib.Model
         public static FlexibleVector CreateSparse(double[] denseVector, float epsilon = float.Epsilon)
         {
             return new FlexibleVector(CreateSparseFromDense(denseVector, epsilon));
+        }
+
+        /// <summary>
+        /// Create vector as a frame of provided indexes and values arrays.
+        /// This is unsafe as any changes to the arrays will be reflected here as well,
+        /// possibly leading to inconsistencies and wrong results.
+        /// </summary>
+        /// <param name="indexes"></param>
+        /// <param name="values"></param>
+        /// <returns></returns>
+        public static FlexibleVector CreateUnsafeReference(int[] indexes, float[] values)
+        {
+            if (indexes.Length != values.Length)
+                throw new ArgumentException("arrays must have matching size");
+            return new FlexibleVector(indexes, values);
         }
 
         private static IEnumerable<(int idx, float val)> CreateSparseFromDense(float[] v, float epsilon)

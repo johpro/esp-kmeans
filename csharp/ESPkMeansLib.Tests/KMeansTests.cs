@@ -61,7 +61,7 @@ namespace ESPkMeansLib.Tests
         {
             const int numClusters = 100;
             var set = TestSet.LoadArxiv100K();
-            var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true };
+            var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true, MinNumClustersForIndexedMeans = 100};
             var (clustering, centroids) = kmeans.Cluster(set.Data!, numClusters, 5);
             var clusterCounts = KMeans.GetClusterCounts(clustering, numClusters);
 
@@ -313,6 +313,8 @@ namespace ESPkMeansLib.Tests
                                 kmeans.UseKMeansPlusPlusInitialization = usePP;
                                 kmeans.UseClustersChangedMap = useNCC;
                                 kmeans.UseIndexedMeans = useINDEX;
+                                //also test indexing structure
+                                kmeans.MinNumClustersForIndexedMeans = 2;
                                 var watch = Stopwatch.StartNew();
                                 var (clustering, centroids, nmi) = RunClusterTest(set, kmeans, k, r);
                                 watch.Stop();

@@ -772,14 +772,22 @@ namespace ESPkMeansLib
                 indexedMeans.Add(c, i);
             }
 
+            var firstCluster = clusterCentroids[0];
+
             Parallel.ForEach(partition, range =>
             {
                 for (int i = range.Item1; i < range.Item2; i++)
                 {
                     var row = data[i];
                     var clusterId = 0;
-                    var bestDistance = double.MinValue;
-                    foreach (var k in indexedMeans.GetNearbyVectors(row, 0))
+                    var bestDistance = row.DotProductWith(firstCluster);
+                    //if we have data with negative vector entries we might get
+                    //negative dot products. Indexing structure, however, only works
+                    //with thresholds > 0
+                    var map = bestDistance >= 0
+                        ? indexedMeans.GetNearbyVectors(row, 0)
+                        : Enumerable.Range(0, clusterCentroids.Length);
+                    foreach (var k in map)
                     {
                         var newDistance = row.DotProductWith(clusterCentroids[k]);
                         if (newDistance <= bestDistance) continue;

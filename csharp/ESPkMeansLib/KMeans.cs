@@ -907,7 +907,7 @@ namespace ESPkMeansLib
             var watch = Stopwatch.StartNew();
             indexedMeans.Set(means);
             if (EnableVerboseLogging)
-                Trace.WriteLine($"indexed means in {watch.Elapsed} | total missed {indexedMeans.DebugTotalMissed}");
+                Trace.WriteLine($"indexed means in {watch.Elapsed}");
             var minMaxSimilarity = indexedMeans.MinDotProduct + 0.0001f;
 
             var numIndexedBranches = 0;

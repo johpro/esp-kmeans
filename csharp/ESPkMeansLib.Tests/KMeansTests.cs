@@ -320,7 +320,7 @@ namespace ESPkMeansLib.Tests
                                 watch.Stop();
                                 Assert.AreEqual(set.Data!.Length, clustering.Length);
                                 Assert.AreEqual(k, centroids.Length);
-                                Trace.WriteLine($"{KMeansParaString(kmeans)} | {watch.Elapsed} | NMI {nmi}");
+                                Trace.WriteLine($"{KMeansParaString(kmeans)} | {watch.Elapsed/r} | NMI {nmi}");
                             }
                         }
                     }

@@ -7,6 +7,7 @@
 
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -45,7 +46,7 @@ namespace ESPkMeansLib.Helpers
             /// how many tokens in source query need to share non-zero entry with vector such that
             /// we get at least required dot product.
             /// </summary>
-            public readonly Dictionary<int, List<(int id, int minNumOccurrences)>> TokenToVectorsMap = new();
+            public readonly DictList<int, (int id, int minNumOccurrences)> TokenToVectorsMap = new();
 
 
             public float MinDotProduct;
@@ -54,10 +55,7 @@ namespace ESPkMeansLib.Helpers
 
             public void Clear()
             {
-                foreach (var l in TokenToVectorsMap.Values)
-                {
-                    l.Clear();
-                }
+                TokenToVectorsMap.Clear();
             }
 
 
@@ -65,15 +63,15 @@ namespace ESPkMeansLib.Helpers
 
         private readonly bool _hasOnlyZeroThreshold;
         private readonly DotProductThItem[] _map;
-        private readonly Dictionary<int, List<int>> _globalMap = new();
+        private readonly DictListInt<int> _globalMap = new();
         private readonly Dictionary<int, FlexibleVector> _indexedVectors = new();
 
         private readonly ConcurrentBag<HashSet<int>> _vectorHashSetBag = new();
         private readonly ConcurrentBag<Dictionary<int, int>> _vectorDictionaryBag = new();
         private readonly ConcurrentBag<List<int>> _intListBag = new();
         private static readonly Dictionary<int, int> EmptyDict = new(0);
-
-        public int DebugTotalMissed { get; set; }
+        
+        
 
         /// <summary>
         /// Create indexing structure based on default thresholds (0.1, 0.25, 0.4f, and 0.6).
@@ -146,11 +144,7 @@ namespace ESPkMeansLib.Helpers
             {
                 dict.Clear();
             }
-            foreach (var list in _globalMap.Values)
-            {
-                list.Clear();
-            }
-            DebugTotalMissed = 0;
+            _globalMap.Clear();
             VectorsCount = 0;
             MaxId = 0;
         }
@@ -169,6 +163,7 @@ namespace ESPkMeansLib.Helpers
             {
                 Add(vectors[i], i);
             }
+            
         }
 
         /// <summary>
@@ -195,15 +190,24 @@ namespace ESPkMeansLib.Helpers
                 AddVectorZero(v, id);
                 return;
             }
-
+            //sorting and squaring makes up around 20% of the indexing time
+            var numZero = 0;
             var len = SortValues(v, out var indexes, out var values);
             var valuesSquared = ArrayPool<float>.Shared.Rent(len);
             fixed (float* valuesSquaredPtr = valuesSquared, valuesPtr = values)
             {
                 Square(len, valuesPtr, valuesSquaredPtr);
+
+                for (; numZero < len; numZero++)
+                {
+                    if (valuesPtr[numZero] > float.MinValue)
+                        break;
+                }
             }
-            AddWithCountStrategy(indexes.AsSpan(0, len),
-                values.AsSpan(0, len), valuesSquared.AsSpan(0, len), id);
+            
+            len -= numZero;
+            AddWithCountStrategy(indexes.AsSpan(numZero, len),
+                values.AsSpan(numZero, len), valuesSquared.AsSpan(numZero, len), id);
             ArrayPool<int>.Shared.Return(indexes);
             ArrayPool<float>.Shared.Return(values);
             ArrayPool<float>.Shared.Return(valuesSquared);
@@ -247,12 +251,14 @@ namespace ESPkMeansLib.Helpers
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         private void AddWithCountStrategy(Span<int> indexes, Span<float> values, Span<float> valuesSquared, int id)
         {
+            //populating global map takes about 40% of the indexing time
             for (var i = 0; i < indexes.Length; i++)
             {
                 var idx = indexes[i];
                 _globalMap.AddToList(idx, id);
             }
-
+            
+         
             foreach (var map in _map)
             {
                 var currentEndIdxOfSumSpan = values.Length - 1;
@@ -320,6 +326,7 @@ namespace ESPkMeansLib.Helpers
                     }
                 }
             }
+            
 
         }
 
@@ -430,7 +437,7 @@ namespace ESPkMeansLib.Helpers
         /// <param name="vector">the query vector</param>
         /// <param name="minDotProduct">the lower bound of the dot product, has to be greater or equal 0</param>
         /// <returns>Enumeration of found vector IDs</returns>
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         public IEnumerable<int> GetNearbyVectors(FlexibleVector vector, float minDotProduct)
         {
             if (!vector.IsSparse)
@@ -477,11 +484,9 @@ namespace ESPkMeansLib.Helpers
                 for (int j = 0; j < indexes.Length; j++)
                 {
                     var idx = indexes[j];
-                    if (_globalMap.TryGetValue(idx, out var list) && list.Count != 0)
+                    if (_globalMap.TryGetValue(idx, out var l))
                     {
-                        //unsafe iteration since foreach loops over collections are not lowered to for loops
-                        var l = CollectionsMarshal.AsSpan(list);
-                        for (int i = 0; i < l.Length; i++)
+                        for (int i = 0; i < l.Count; i++)
                         {
                             countDict.IncrementItem(l[i]);
                         }
@@ -492,12 +497,11 @@ namespace ESPkMeansLib.Helpers
             for (int j = 0; j < indexes.Length; j++)
             {
                 var idx = indexes[j];
-                if (map.TokenToVectorsMap.TryGetValue(idx, out var vecList) && vecList.Count != 0)
+                if (map.TokenToVectorsMap.TryGetValue(idx, out var vecList))
                 {
-                    var vecSpan = CollectionsMarshal.AsSpan(vecList);
-                    for (int i = 0; i < vecSpan.Length; i++)
+                    for (int i = 0; i < vecList.Count; i++)
                     {
-                        var (id, minNumOccurrences) = vecSpan[i];
+                        var (id, minNumOccurrences) = vecList[i];
                         if (minNumOccurrences == 1 || minNumOccurrences <= vecLen && countDict[id] >= minNumOccurrences)
                         {
                             hashSet.Add(id);
@@ -515,11 +519,8 @@ namespace ESPkMeansLib.Helpers
 
             if (countDict != EmptyDict)
             {
-                countDict.Clear();
                 _vectorDictionaryBag.Add(countDict);
             }
-
-            hashSet.Clear();
             _vectorHashSetBag.Add(hashSet);
         }
 
@@ -528,12 +529,15 @@ namespace ESPkMeansLib.Helpers
         {
             if (!map.TokenToVectorsMap.TryGetValue(token, out var l))
                 yield break;
-            foreach ((int id, int minNumOccurrences) in l)
+
+            for (int i = 0; i < l.Count; i++)
             {
+                var (id, minNumOccurrences) = l[i];
                 if (minNumOccurrences > 1)
                     continue;
                 yield return id;
             }
+            
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -547,14 +551,14 @@ namespace ESPkMeansLib.Helpers
             for (int j = 0; j < vector.Indexes.Length; j++)
             {
                 var idx = vector.Indexes[j];
-                if (_globalMap.TryGetValue(idx, out var list) && list.Count != 0)
+                if (_globalMap.TryGetValue(idx, out var list))
                 {
-                    foreach (var k in list)
+                    for (int i = 0; i < list.Count; i++)
                     {
+                        var k = list[i];
                         if (hashSet.Add(k))
                             yield return k;
                     }
-
                     if (hashSet.Count == VectorsCount)
                         break; //already all means returned
                 }

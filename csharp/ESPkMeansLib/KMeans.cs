@@ -62,7 +62,7 @@ namespace ESPkMeansLib
         /// <summary>
         /// Hyper-parameter that determines when to use the indexing structure for Spherical k-Means on sparse data (indexing structure does not pay off if only a handful of centroids change between iterations)
         /// </summary>
-        public int MinNumClustersForIndexedMeans { get; set; } = 130;
+        public int MinNumClustersForIndexedMeans { get; set; } = 120;
 
         private static T[] GetRandomSample<T>(T[] data, double ratio, int minItems = 1)
         {
@@ -157,7 +157,7 @@ namespace ESPkMeansLib
         {
             if (numRuns < 1)
                 throw new ArgumentException("invalid number of runs specified");
-
+            
             var isSparse = data[0].IsSparse;
             var dimension = 0;
             if (!isSparse)

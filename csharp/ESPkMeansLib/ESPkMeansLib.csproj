@@ -12,7 +12,7 @@
     <PackageProjectUrl>https://github.com/johpro/esp-kmeans</PackageProjectUrl>
     <RepositoryUrl>https://github.com/johpro/esp-kmeans</RepositoryUrl>
 	  <Title>ESP-kMeans</Title>
-    <Description>ESP-kMeans is a fast, scalable, and easy-to-use clustering library with efficient implementations of k-Means++ and Spherical k-Means++.</Description>
+    <Description>ESP-kMeans is a fast and easy-to-use clustering library for text and numerical data, with efficient implementations of k-Means++ and Spherical k-Means++.</Description>
 	  <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 

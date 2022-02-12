@@ -163,7 +163,11 @@ namespace ESPkMeansLib.Helpers
             {
                 Add(vectors[i], i);
             }
+
             
+            //var c2 = _globalMap.Keys.Count(k => _globalMap[k].Count > vectors.Length / 2);
+            //var c10 = _globalMap.Keys.Count(k => _globalMap[k].Count > vectors.Length / 10);
+            //Trace.WriteLine($"g count is {_globalMap.Count}, {c2} have > 50%, {c10} > 10%");
         }
 
         /// <summary>
@@ -474,6 +478,7 @@ namespace ESPkMeansLib.Helpers
             var vecLen = vector.Length;
             var indexes = vector.Indexes;
             var countDict = EmptyDict;
+            var offset = 0;
             if (!_hasOnlyZeroThreshold)
             {
                 //in the case of only one threshold we do not need to count with global map (and global map is also not populated)
@@ -481,11 +486,18 @@ namespace ESPkMeansLib.Helpers
                     countDict.Clear();
                 else
                     countDict = new();
+                var countTh = Math.Max(3, _indexedVectors.Count / 4);
                 for (int j = 0; j < indexes.Length; j++)
                 {
                     var idx = indexes[j];
                     if (_globalMap.TryGetValue(idx, out var l))
                     {
+                        if (l.Count >= countTh)
+                        {
+                            //avoid going through long lists, we just set down the threshold for retrieval
+                            offset++;
+                            continue;
+                        }
                         for (int i = 0; i < l.Count; i++)
                         {
                             countDict.IncrementItem(l[i]);
@@ -502,7 +514,7 @@ namespace ESPkMeansLib.Helpers
                     for (int i = 0; i < vecList.Count; i++)
                     {
                         var (id, minNumOccurrences) = vecList[i];
-                        if (minNumOccurrences == 1 || minNumOccurrences <= vecLen && countDict[id] >= minNumOccurrences)
+                        if (minNumOccurrences == 1 || minNumOccurrences <= vecLen && countDict.GetValueOrDefault(id) >= minNumOccurrences - offset)
                         {
                             hashSet.Add(id);
                         }

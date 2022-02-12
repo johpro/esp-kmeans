@@ -92,6 +92,8 @@ public class DictListInt<TKey> where TKey : notnull
         Array.Resize(ref _entries, Math.Max(capacity, _entries.Length * 2));
     }
 
+    public IList<int> this[TKey key] => TryGetValue(key, out var l) ? l : Array.Empty<int>();
+
     /// <summary>
     /// Try to get list of specified key.
     /// </summary>

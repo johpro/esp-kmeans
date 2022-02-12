@@ -81,6 +81,7 @@ namespace ESPkMeansLib.Tests
             const int numClusters = 500;
             var set = TestSet.LoadArxiv100K();
             var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true, EnableVerboseLogging = true};
+            kmeans.MinNumClustersForIndexedMeans = 30;
             var (clustering, centroids) = kmeans.Cluster(set.Data!, numClusters, 1);
 
         }
@@ -93,10 +94,12 @@ namespace ESPkMeansLib.Tests
             var kmeans = new KMeans { UseSphericalKMeans = true };
             foreach (var numClusters in new[]{100, 1_000})
             {
+                var watch = Stopwatch.StartNew();
+                
                 Trace.WriteLine($"\r\n{numClusters} clusters\r\n");
                 kmeans.UseIndexedMeans = false;
                 kmeans.UseClustersChangedMap = false;
-                var watch = Stopwatch.StartNew();
+                
                 kmeans.Cluster(set.Data!, numClusters, numRuns);
                 watch.Stop();
                 Trace.WriteLine($"{watch.Elapsed / numRuns} | baseline");

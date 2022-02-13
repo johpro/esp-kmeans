@@ -143,6 +143,17 @@ namespace ESPkMeansLib.Tests.Helpers
                     Trace.WriteLine($"k {k}: {res.Length} / {groundTruth.Length}");
                     Assert.AreEqual(groundTruth.Length, res.Length);
                     Assert.AreEqual(res.Length, res.Select(id => db.GetVectorById(id)).Intersect(groundTruth).Count());
+                    
+                    if (k != 1) continue;
+
+                    var (k1res, k1dp) = db.GetNearestVector(v);
+                    if(v.Length == 0)
+                        Assert.AreEqual(-1, k1res);
+                    else
+                    {
+                        Assert.AreEqual(res[0], k1res);
+                        Assert.AreEqual(v.DotProductWith(db.GetVectorById(k1res)), k1dp, 0.0001f);
+                    }
                 }
                 Trace.WriteLine("");
             }

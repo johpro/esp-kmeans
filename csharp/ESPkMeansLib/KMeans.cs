@@ -761,7 +761,8 @@ namespace ESPkMeansLib
                     $"provided distances Array is too small ({distances.Length}) to hold all distances ({data.Length})");
             var clustering = new int[data.Length];
             var partition = Partitioner.Create(0, data.Length);
-            var indexedMeans = new DotProductIndexedVectors(new[] { 0f });
+            //we can use normal thresholds as we use knn-strategy
+            var indexedMeans = new DotProductIndexedVectors();
 
             for (int i = 0; i < clusterCentroids.Length; i++)
             {
@@ -779,24 +780,29 @@ namespace ESPkMeansLib
                 for (int i = range.Item1; i < range.Item2; i++)
                 {
                     var row = data[i];
-                    var clusterId = 0;
-                    var bestDistance = row.DotProductWith(firstCluster);
-                    //if we have data with negative vector entries we might get
-                    //negative dot products. Indexing structure, however, only works
-                    //with thresholds > 0
-                    var map = bestDistance >= 0
-                        ? indexedMeans.GetNearbyVectors(row, 0)
-                        : Enumerable.Range(0, clusterCentroids.Length);
-                    foreach (var k in map)
+                    var (clusterId, bestDistance) = indexedMeans.GetNearestVector(row);
+
+                    if (bestDistance <= 0)
                     {
-                        var newDistance = row.DotProductWith(clusterCentroids[k]);
-                        if (newDistance <= bestDistance) continue;
-                        bestDistance = newDistance;
-                        clusterId = k;
+                        //we do not know for sure that this is really the nearest cluster.
+                        //If we have data with negative vector entries we might get
+                        //negative dot products. Indexing structure, however, only works
+                        //with thresholds > 0
+                        clusterId = 0;
+                        bestDistance = row.DotProductWith(firstCluster);
+                        for (int k = 1; k < clusterCentroids.Length; k++)
+                        {
+                            var newDistance = row.DotProductWith(clusterCentroids[k]);
+                            if (newDistance <= bestDistance) continue;
+                            bestDistance = newDistance;
+                            clusterId = k;
+                        }
                     }
+
+                    
                     clustering[i] = clusterId;
                     if (distances != null)
-                        distances[i] = (float)bestDistance;
+                        distances[i] = 1 - bestDistance;
                 }
                 Thread.MemoryBarrier();
             });

@@ -70,8 +70,8 @@ namespace ESPkMeansLib.Helpers
         private readonly ConcurrentBag<Dictionary<int, int>> _vectorDictionaryBag = new();
         private readonly ConcurrentBag<List<int>> _intListBag = new();
         private static readonly Dictionary<int, int> EmptyDict = new(0);
-        
-        
+
+
 
         /// <summary>
         /// Create indexing structure based on default thresholds (0.1, 0.25, 0.4f, and 0.6).
@@ -163,11 +163,7 @@ namespace ESPkMeansLib.Helpers
             {
                 Add(vectors[i], i);
             }
-
             
-            //var c2 = _globalMap.Keys.Count(k => _globalMap[k].Count > vectors.Length / 2);
-            //var c10 = _globalMap.Keys.Count(k => _globalMap[k].Count > vectors.Length / 10);
-            //Trace.WriteLine($"g count is {_globalMap.Count}, {c2} have > 50%, {c10} > 10%");
         }
 
         /// <summary>
@@ -208,7 +204,7 @@ namespace ESPkMeansLib.Helpers
                         break;
                 }
             }
-            
+
             len -= numZero;
             AddWithCountStrategy(indexes.AsSpan(numZero, len),
                 values.AsSpan(numZero, len), valuesSquared.AsSpan(numZero, len), id);
@@ -261,8 +257,8 @@ namespace ESPkMeansLib.Helpers
                 var idx = indexes[i];
                 _globalMap.AddToList(idx, id);
             }
-            
-         
+
+
             foreach (var map in _map)
             {
                 var currentEndIdxOfSumSpan = values.Length - 1;
@@ -330,7 +326,7 @@ namespace ESPkMeansLib.Helpers
                     }
                 }
             }
-            
+
 
         }
 
@@ -345,6 +341,72 @@ namespace ESPkMeansLib.Helpers
         }
 
         /// <summary>
+        /// Get the id and the corresponding dot product of the nearest vector.
+        /// Returns id of -1 if no match has been found.
+        /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
+        /// A threshold > 0 (<paramref name="minDotProduct"/>) can be defined
+        /// to ignore neighbors that are too far away.
+        /// </summary>
+        /// <param name="vector"></param>
+        /// <param name="minDotProduct"></param>
+        /// <returns></returns>
+        /// <exception cref="ArgumentException"></exception>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public (int id, float dotProduct) GetNearestVector(FlexibleVector vector, float minDotProduct = 0)
+        {
+            if (minDotProduct < 0)
+                throw new ArgumentException("indexing structure does not support negative dot product threshold");
+
+            var countDict = EmptyDict;
+            try
+            {
+                //count occurrences with global map first so that we do not need to repeat this for every threshold
+                int offset = 0;
+                if (!_hasOnlyZeroThreshold)
+                    countDict = CountAffectedClusters(vector.Indexes, out offset);
+                var lowerLimit = _map[0].MinDotProduct <= float.Epsilon ? 0 : -1;
+                for (int i = _map.Length - 1; i >= lowerLimit; i--)
+                {
+                    var th = i < 0 ? 0 : _map[i].MinDotProduct;
+                    var isLastBody = i == lowerLimit || th <= minDotProduct;
+
+                    var bestDp = float.MinValue;
+                    var bestId = -1;
+                    var clusters = i < 0
+                        ? GetNearbyVectorsExhaustiveStrategy(vector)
+                        : GetNearbyVectorsCountStrategy(_map[i], vector, countDict, offset);
+                    foreach (var id in clusters)
+                    {
+                        var dp = _indexedVectors[id].DotProductWith(vector);
+                        if (dp <= bestDp)
+                            continue;
+                        bestDp = dp;
+                        bestId = id;
+                    }
+
+                    if (bestDp < th)
+                    {
+                        if (isLastBody)
+                            return (-1, default);
+                        continue;
+                    }
+
+                    return (bestId, bestDp);
+                }
+
+                return (-1, default);
+            }
+            finally
+            {
+                if (countDict != EmptyDict)
+                    _vectorDictionaryBag.Add(countDict);
+            }
+
+
+        }
+
+
+        /// <summary>
         /// Retrieve k nearest neighbors from index (can be fewer than k), sorted in descending order of similarity.
         /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
         /// A threshold > 0 (<paramref name="minDotProduct"/>) can be defined
@@ -355,6 +417,7 @@ namespace ESPkMeansLib.Helpers
         /// <param name="minDotProduct">Threshold to ignore distant vectors (actual dot product may still be lower)</param>
         /// <returns>Corresponding identifiers of the k (or fewer) nearest neighbors.</returns>
         /// <exception cref="ArgumentException"></exception>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public int[] GetKNearestVectors(FlexibleVector vector, int k, float minDotProduct = 0)
         {
             if (minDotProduct < 0)
@@ -366,6 +429,11 @@ namespace ESPkMeansLib.Helpers
                 vecList.Clear();
             else
                 vecList = new List<int>(k);
+            var countDict = EmptyDict;
+            //count occurrences with global map first so that we do not need to repeat this for every threshold
+            int offset = 0;
+            if (!_hasOnlyZeroThreshold)
+                countDict = CountAffectedClusters(vector.Indexes, out offset);
             try
             {
                 var lowerLimit = _map[0].MinDotProduct <= float.Epsilon ? 0 : -1;
@@ -374,7 +442,10 @@ namespace ESPkMeansLib.Helpers
                     var th = i < 0 ? 0 : _map[i].MinDotProduct;
                     var isLastBody = i == lowerLimit || th <= minDotProduct;
                     vecList.Clear();
-                    foreach (var id in GetNearbyVectors(vector, th))
+                    var clusters = i < 0
+                        ? GetNearbyVectorsExhaustiveStrategy(vector)
+                        : GetNearbyVectorsCountStrategy(_map[i], vector, countDict, offset);
+                    foreach (var id in clusters)
                     {
                         vecList.Add(id);
                     }
@@ -399,14 +470,33 @@ namespace ESPkMeansLib.Helpers
                         continue;
                     }
 
-                    var idList = ArrayPool<int>.Shared.Rent(vecList.Count);
-                    vecList.CopyTo(idList);
-                    Array.Sort(cosDistanceList, idList, 0, vecList.Count);
                     var numRes = Math.Min(k, numAboveTh);
                     var res = new int[numRes];
-                    Array.Copy(idList, res, res.Length);
+
+                    if (numRes == 1)
+                    {
+                        //do not need to sort results, we can take best item
+                        var bestDistance = float.MaxValue;
+                        for (int j = 0; j < vecList.Count; j++)
+                        {
+                            var distance = cosDistanceList[j];
+                            if (distance >= bestDistance)
+                                continue;
+                            bestDistance = distance;
+                            res[0] = vecList[j];
+                        }
+                    }
+                    else if (numRes > 1)
+                    {
+                        var idList = ArrayPool<int>.Shared.Rent(vecList.Count);
+                        vecList.CopyTo(idList);
+                        Array.Sort(cosDistanceList, idList, 0, vecList.Count);
+                        Array.Copy(idList, res, res.Length);
+                        ArrayPool<int>.Shared.Return(idList);
+                    }
+
+
                     ArrayPool<float>.Shared.Return(cosDistanceList);
-                    ArrayPool<int>.Shared.Return(idList);
                     return res;
                 }
 
@@ -415,6 +505,8 @@ namespace ESPkMeansLib.Helpers
             finally
             {
                 _intListBag.Add(vecList);
+                if (countDict != EmptyDict)
+                    _vectorDictionaryBag.Add(countDict);
             }
         }
 
@@ -468,7 +560,8 @@ namespace ESPkMeansLib.Helpers
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private IEnumerable<int> GetNearbyVectorsCountStrategy(DotProductThItem map, FlexibleVector vector)
+        private IEnumerable<int> GetNearbyVectorsCountStrategy(DotProductThItem map, FlexibleVector vector,
+            Dictionary<int, int>? cachedCountDict = null, int cachedOffset = 0)
         {
             if (_vectorHashSetBag.TryTake(out var hashSet))
                 hashSet.Clear();
@@ -477,34 +570,11 @@ namespace ESPkMeansLib.Helpers
 
             var vecLen = vector.Length;
             var indexes = vector.Indexes;
-            var countDict = EmptyDict;
-            var offset = 0;
-            if (!_hasOnlyZeroThreshold)
-            {
-                //in the case of only one threshold we do not need to count with global map (and global map is also not populated)
-                if (_vectorDictionaryBag.TryTake(out countDict))
-                    countDict.Clear();
-                else
-                    countDict = new();
-                var countTh = Math.Max(3, _indexedVectors.Count / 4);
-                for (int j = 0; j < indexes.Length; j++)
-                {
-                    var idx = indexes[j];
-                    if (_globalMap.TryGetValue(idx, out var l))
-                    {
-                        if (l.Count >= countTh)
-                        {
-                            //avoid going through long lists, we just set down the threshold for retrieval
-                            offset++;
-                            continue;
-                        }
-                        for (int i = 0; i < l.Count; i++)
-                        {
-                            countDict.IncrementItem(l[i]);
-                        }
-                    }
-                }
-            }
+            var countDict = cachedCountDict ?? EmptyDict;
+            var offset = cachedOffset;
+            //in the case of only one threshold we do not need to count with global map (and global map is also not populated)
+            if (cachedCountDict == null && !_hasOnlyZeroThreshold)
+                countDict = CountAffectedClusters(indexes, out offset);
 
             for (int j = 0; j < indexes.Length; j++)
             {
@@ -529,11 +599,43 @@ namespace ESPkMeansLib.Helpers
                 yield return k;
             }
 
-            if (countDict != EmptyDict)
+            if (cachedCountDict == null && countDict != EmptyDict)
             {
                 _vectorDictionaryBag.Add(countDict);
             }
             _vectorHashSetBag.Add(hashSet);
+        }
+
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private Dictionary<int, int> CountAffectedClusters(ReadOnlySpan<int> indexes, out int offset)
+        {
+            offset = 0;
+            if (_vectorDictionaryBag.TryTake(out var countDict))
+                countDict.Clear();
+            else
+                countDict = new();
+            var countTh = Math.Max(3, _indexedVectors.Count / 4);
+            for (int j = 0; j < indexes.Length; j++)
+            {
+                var idx = indexes[j];
+                if (_globalMap.TryGetValue(idx, out var l))
+                {
+                    if (l.Count >= countTh)
+                    {
+                        //avoid going through long lists, we just set down the threshold for retrieval
+                        offset++;
+                        continue;
+                    }
+
+                    for (int i = 0; i < l.Count; i++)
+                    {
+                        countDict.IncrementItem(l[i]);
+                    }
+                }
+            }
+
+            return countDict;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -549,7 +651,7 @@ namespace ESPkMeansLib.Helpers
                     continue;
                 yield return id;
             }
-            
+
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -563,21 +665,22 @@ namespace ESPkMeansLib.Helpers
             for (int j = 0; j < vector.Indexes.Length; j++)
             {
                 var idx = vector.Indexes[j];
-                if (_globalMap.TryGetValue(idx, out var list))
-                {
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        var k = list[i];
-                        if (hashSet.Add(k))
-                            yield return k;
-                    }
-                    if (hashSet.Count == VectorsCount)
-                        break; //already all means returned
-                }
+                if (!_globalMap.TryGetValue(idx, out var list)) continue;
 
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var k = list[i];
+                    hashSet.Add(k);
+                }
+                if (hashSet.Count == VectorsCount)
+                    break; //already all means returned
             }
 
-            hashSet.Clear();
+            foreach (var k in hashSet)
+            {
+                yield return k;
+            }
+
             _vectorHashSetBag.Add(hashSet);
         }
 

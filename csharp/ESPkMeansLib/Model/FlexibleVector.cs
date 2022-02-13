@@ -1170,8 +1170,8 @@ namespace ESPkMeansLib.Model
             }
 
             squaredSum = (float)GetSquaredSum();
-
-            return Math.Abs(squaredSum - 1f) < 0.000001f;
+            //deviations up to 0.00002 can easily happen due to rounding losses
+            return Math.Abs(squaredSum - 1f) < 0.00002f;
         }
 
         /// <summary>

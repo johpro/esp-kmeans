@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using ESPkMeansLib.Helpers;
 using ESPkMeansLib.Model;
 using ESPkMeansLib.Tests.Model;
@@ -158,7 +159,23 @@ namespace ESPkMeansLib.Tests.Helpers
                 Trace.WriteLine("");
             }
         }
-        
+
+        [TestMethod]
+        public void IndexingSpeedTest()
+        {
+            var set = FlexibleVectorTests.CreateRandomVectors(5_000, true, 2_000);
+            Parallel.For(0, set.Length, i => set[i].NormalizeAsUnitVector());
+            var watch = Stopwatch.StartNew();
+            var db = new DotProductIndexedVectors();
+            db.Set(set);
+            Trace.WriteLine($"{watch.Elapsed} default thresholds"); watch.Restart();
+            db = new DotProductIndexedVectors(new []{0f});
+            db.Set(set);
+            Trace.WriteLine($"{watch.Elapsed} threshold 0"); watch.Restart();
+            db = new DotProductIndexedVectors(new[] { 0.01f });
+            db.Set(set);
+            Trace.WriteLine($"{watch.Elapsed} threshold 0.01"); watch.Restart();
+        }
 
         [TestMethod]
         public unsafe void SquareTest()

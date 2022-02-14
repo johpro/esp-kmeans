@@ -163,7 +163,6 @@ namespace ESPkMeansLib.Helpers
             {
                 Add(vectors[i], i);
             }
-            
         }
 
         /// <summary>
@@ -184,12 +183,17 @@ namespace ESPkMeansLib.Helpers
             VectorsCount++;
             MaxId = Math.Max(MaxId, id);
             _indexedVectors.Add(id, v);
+
+            //in every case we need to populate global map
+
             if (_hasOnlyZeroThreshold)
             {
-                //we just add all tokens
-                AddVectorZero(v, id);
+                //we just need global map
+                AddToGlobalMap(v.Indexes, id);
                 return;
             }
+
+
             //sorting and squaring makes up around 20% of the indexing time
             var numZero = 0;
             var len = SortValues(v, out var indexes, out var values);
@@ -206,7 +210,9 @@ namespace ESPkMeansLib.Helpers
             }
 
             len -= numZero;
-            AddWithCountStrategy(indexes.AsSpan(numZero, len),
+            var indexesSpan = indexes.AsSpan(numZero, len);
+            AddToGlobalMap(indexesSpan, id);
+            AddWithCountStrategy(indexesSpan,
                 values.AsSpan(numZero, len), valuesSquared.AsSpan(numZero, len), id);
             ArrayPool<int>.Shared.Return(indexes);
             ArrayPool<float>.Shared.Return(values);
@@ -215,15 +221,12 @@ namespace ESPkMeansLib.Helpers
 
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private void AddVectorZero(FlexibleVector v, int id)
+        private void AddToGlobalMap(ReadOnlySpan<int> indexes, int id)
         {
-            //will be called if only one Lambda is present and it is 0 -> simple index
-            var map = _map[0];
-            for (int i = 0; i < v.Indexes.Length; i++)
+            for (var i = 0; i < indexes.Length; i++)
             {
-                var idx = v.Indexes[i];
-                map.TokenToVectorsMap.AddToList(idx, (id, 1));
-                //map.SingleTokenToVectorsMap?.AddToList(idx, id);
+                var idx = indexes[i];
+                _globalMap.AddToList(idx, id);
             }
         }
 
@@ -249,80 +252,68 @@ namespace ESPkMeansLib.Helpers
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private void AddWithCountStrategy(Span<int> indexes, Span<float> values, Span<float> valuesSquared, int id)
+        private unsafe void AddWithCountStrategy(Span<int> indexes, Span<float> values, Span<float> valuesSquared, int id)
         {
-            //populating global map takes about 40% of the indexing time
-            for (var i = 0; i < indexes.Length; i++)
+            //pointer-based access leads to slight gains in performance of a about 10-15%
+            //map.TokenToVectorsMap.AddToList takes most of the time
+            fixed (int* indexesPtr = indexes)
             {
-                var idx = indexes[i];
-                _globalMap.AddToList(idx, id);
-            }
-
-
-            foreach (var map in _map)
-            {
-                var currentEndIdxOfSumSpan = values.Length - 1;
-                var squaredSum = 0f;
-                var squaredSumOfSumSpan = 0f;
-
-                var minDotProduct = map.MinDotProduct;
-                var requiredSquaredSum = map.MinDotProductSquared - 0.001f;
-                var maxSquaredSum = map.MaxSquaredSum + 0.001f; //epsilon so that loop that adds tokens does not stop early
-
-                var minNumTokens = 1;
-
-                for (int i = values.Length - 1; i >= 0; i--)
+                fixed (float* valuesPtr = values, valuesSquaredPtr = valuesSquared)
                 {
-                    var val = values[i];
-                    var idx = indexes[i];
-                    var valSquared = valuesSquared[i];
-                    squaredSum += valSquared;
-                    if (val >= minDotProduct)
+                    foreach (var map in _map)
                     {
-                        //if only this token is present in query it could already be enough to get
-                        //required dot product
-                        map.TokenToVectorsMap.AddToList(idx, (id, 1));
-                        currentEndIdxOfSumSpan = i - 1;
-                        continue;
-                    }
+                        var currentEndIdxOfSumSpan = values.Length - 1;
+                        var squaredSumOfSumSpan = 0f;
 
-                    if (val <= float.Epsilon)
-                        break;
+                        var minDotProduct = map.MinDotProduct;
+                        var requiredSquaredSum = map.MinDotProductSquared - 0.001f;
 
-                    //now determine min num of tokens with a non-zero entry in this vector
-                    //to retrieve required min dot product, given that none of the previous (higher-valued)
-                    //tokens were present -> minNumTokens increases monotonically
+                        var minNumTokens = 1;
 
-                    //-> we can do this similar to a "sliding window" approach so that we avoid squared time complexity
-                    if (squaredSumOfSumSpan > 0)
-                    {
-                        squaredSumOfSumSpan -= valuesSquared[i + 1];
-                    }
-
-                    var isDone = false;
-                    minNumTokens--;
-                    do
-                    {
-                        if (currentEndIdxOfSumSpan < 0)
+                        for (int i = values.Length - 1; i >= 0; i--)
                         {
-                            //we cannot achieve required sum anymore with this or next tokens
-                            isDone = true;
-                            break;
+                            var val = valuesPtr[i];
+                            var idx = indexesPtr[i];
+                            if (val >= minDotProduct)
+                            {
+                                //if only this token is present in query it could already be enough to get
+                                //required dot product
+                                map.TokenToVectorsMap.AddToList(idx, (id, 1));
+                                currentEndIdxOfSumSpan = i - 1;
+                                continue;
+                            }
+
+                            //now determine min num of tokens with a non-zero entry in this vector
+                            //to retrieve required min dot product, given that none of the previous (higher-valued)
+                            //tokens were present -> minNumTokens increases monotonically
+
+                            //-> we can do this similar to a "sliding window" approach so that we avoid squared time complexity
+                            if (squaredSumOfSumSpan > 0)
+                            {
+                                squaredSumOfSumSpan -= valuesSquaredPtr[i + 1];
+                            }
+
+                            var isDone = false;
+                            squaredSumOfSumSpan += valuesSquaredPtr[currentEndIdxOfSumSpan];
+                            currentEndIdxOfSumSpan--;
+                            while (squaredSumOfSumSpan < requiredSquaredSum)
+                            {
+                                if (currentEndIdxOfSumSpan < 0)
+                                {
+                                    //we cannot achieve required sum anymore with this or next tokens
+                                    isDone = true;
+                                    break;
+                                }
+                                squaredSumOfSumSpan += valuesSquaredPtr[currentEndIdxOfSumSpan];
+                                currentEndIdxOfSumSpan--;
+                                minNumTokens++;
+                            }
+
+                            if (isDone)
+                                break;
+
+                            map.TokenToVectorsMap.AddToList(idx, (id, minNumTokens));
                         }
-                        squaredSumOfSumSpan += valuesSquared[currentEndIdxOfSumSpan];
-                        currentEndIdxOfSumSpan--;
-                        minNumTokens++;
-                    } while (squaredSumOfSumSpan < requiredSquaredSum);
-
-                    if (isDone)
-                        break;
-
-                    map.TokenToVectorsMap.AddToList(idx, (id, minNumTokens));
-
-                    if (squaredSum > maxSquaredSum)
-                    {
-                        //if(map.MinDotProduct <= 0.11f) Trace.WriteLine($"stopped at pos {i}, processed {values.Length-i}");
-                        break; //done, we cannot achieve required sum anymore with next tokens alone
                     }
                 }
             }
@@ -372,7 +363,7 @@ namespace ESPkMeansLib.Helpers
 
                     var bestDp = float.MinValue;
                     var bestId = -1;
-                    var clusters = i < 0
+                    var clusters = th <= float.Epsilon
                         ? GetNearbyVectorsExhaustiveStrategy(vector)
                         : GetNearbyVectorsCountStrategy(_map[i], vector, countDict, offset);
                     foreach (var id in clusters)
@@ -442,7 +433,7 @@ namespace ESPkMeansLib.Helpers
                     var th = i < 0 ? 0 : _map[i].MinDotProduct;
                     var isLastBody = i == lowerLimit || th <= minDotProduct;
                     vecList.Clear();
-                    var clusters = i < 0
+                    var clusters = th <= float.Epsilon
                         ? GetNearbyVectorsExhaustiveStrategy(vector)
                         : GetNearbyVectorsCountStrategy(_map[i], vector, countDict, offset);
                     foreach (var id in clusters)
@@ -545,6 +536,15 @@ namespace ESPkMeansLib.Helpers
             if (vector.Length == 0)
                 return Enumerable.Empty<int>();
 
+            if (minDotProduct <= float.Epsilon ||
+                minDotProduct < _map[0].MinDotProduct ||
+                _hasOnlyZeroThreshold)
+            {
+                return vector.Indexes.Length == 1
+                    ? GetNearbyVectorsSingleTokenExhaustiveStrategy(vector.Indexes[0])
+                    : GetNearbyVectorsExhaustiveStrategy(vector);
+            }
+
             for (int i = _map.Length - 1; i >= 0; i--)
             {
                 var map = _map[i];
@@ -556,7 +556,7 @@ namespace ESPkMeansLib.Helpers
                 }
             }
 
-            return GetNearbyVectorsExhaustiveStrategy(vector);
+            throw new Exception("code path should not be reached");
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -573,7 +573,7 @@ namespace ESPkMeansLib.Helpers
             var countDict = cachedCountDict ?? EmptyDict;
             var offset = cachedOffset;
             //in the case of only one threshold we do not need to count with global map (and global map is also not populated)
-            if (cachedCountDict == null && !_hasOnlyZeroThreshold)
+            if (cachedCountDict == null)
                 countDict = CountAffectedClusters(indexes, out offset);
 
             for (int j = 0; j < indexes.Length; j++)
@@ -682,6 +682,17 @@ namespace ESPkMeansLib.Helpers
             }
 
             _vectorHashSetBag.Add(hashSet);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private IEnumerable<int> GetNearbyVectorsSingleTokenExhaustiveStrategy(int token)
+        {
+            if (!_globalMap.TryGetValue(token, out var list)) yield break;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                yield return list[i];
+            }
         }
 
 

@@ -40,7 +40,7 @@ namespace ESPkMeansLib.Tests.Helpers
                 }
             }
             Assert.AreEqual(testData1.Length, dict.Count);
-            Assert.AreEqual(testData1.Length, dict.EntriesCount);
+            Assert.AreEqual(3, dict.EntriesCount);
             foreach ((int key, int[] list) in testData1)
             {
                 Assert.IsTrue(dict.TryGetValue(key, out var l));
@@ -60,7 +60,7 @@ namespace ESPkMeansLib.Tests.Helpers
                     dict.AddToList(key, i);
                 }
             }
-            Assert.AreEqual(5, dict.Count);
+            Assert.AreEqual(testData2.Length, dict.Count);
             foreach ((int key, int[] list) in testData2)
             {
                 Assert.IsTrue(dict.TryGetValue(key, out var l));

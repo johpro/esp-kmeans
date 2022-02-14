@@ -92,6 +92,11 @@ public class DictListInt<TKey> where TKey : notnull
         Array.Resize(ref _entries, Math.Max(capacity, _entries.Length * 2));
     }
 
+    /// <summary>
+    /// Get list of specified key. Will return empty list if key could not be found.
+    /// </summary>
+    /// <param name="key"></param>
+    /// <returns></returns>
     public IList<int> this[TKey key] => TryGetValue(key, out var l) ? l : Array.Empty<int>();
 
     /// <summary>

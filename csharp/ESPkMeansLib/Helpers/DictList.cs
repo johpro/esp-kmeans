@@ -20,9 +20,10 @@ namespace ESPkMeansLib.Helpers
     public class DictList<TKey, TValue> where TKey : notnull
     {
 
-        private readonly Dictionary<TKey, int> _dict = new();
-        private (bool set, TValue entry, List<TValue>? list)[] _entries = new (bool set, TValue entry, List<TValue>? list)[2];
+        private readonly Dictionary<TKey, (TValue entry, List<TValue>? list)> _dict = new();
+        private List<TValue>?[] _entries = new List<TValue>[2];
         private int _entriesCount;
+        private int _availableCount;
 
         public int Count => _dict.Count;
         public int EntriesCount => _entriesCount;
@@ -33,12 +34,13 @@ namespace ESPkMeansLib.Helpers
         /// </summary>
         public void Clear()
         {
-            for (var i = _entriesCount - 1; i >= 0; i--)
+            _dict.Clear();
+            for (var i = 0; i < _entriesCount; i++)
             {
-                var list = _entries[i].list;
-                list?.Clear();
-                _entries[i] = (false, default, list);
+                //Clear() on a list without references is very efficient (will just set counter to 0)
+                _entries.DangerousGetReferenceAt(i)!.Clear();
             }
+            _entriesCount = 0;
         }
 
         /// <summary>
@@ -50,29 +52,37 @@ namespace ESPkMeansLib.Helpers
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         public void AddToList(TKey key, TValue val)
         {
-            ref int ptr = ref CollectionsMarshal.GetValueRefOrAddDefault(_dict, key, out var exists);
+            ref (TValue entry, List<TValue>? list) ptr = ref CollectionsMarshal.GetValueRefOrAddDefault(_dict, key, out var exists);
             if (!exists)
             {
-                ptr = _entriesCount;
-                _entriesCount++;
+                ptr = (val, null);
+                return;
+            }
+
+            if (ptr.list != null)
+            {
+                ptr.list.Add(val);
+                return;
+            }
+
+            List<TValue> list;
+            var idx = _entriesCount;
+            _entriesCount++;
+            if (idx < _availableCount)
+            {
+                list = _entries.DangerousGetReferenceAt(idx)!;
+            }
+            else
+            {
                 EnsureCapacity(_entriesCount);
-                _entries[ptr] = (true, val, null);
-                return;
-            }
-            ref (bool set, TValue entry, List<TValue>? list) entry = ref _entries.DangerousGetReferenceAt(ptr);
-
-            if (entry.set && entry.list == null)
-            {
-                var list = new List<TValue>(2) { entry.entry, val };
-                entry = (true, default, list);
-                return;
+                list = new List<TValue>(2);
+                _availableCount = _entriesCount;
+                _entries[idx] = list;
             }
 
-            entry.list?.Add(val);
-            if (!entry.set)
-            {
-                entry = (true, val, entry.list);
-            }
+            list.Add(ptr.entry);
+            list.Add(val);
+            ptr = (default, list);
         }
 
 
@@ -82,6 +92,13 @@ namespace ESPkMeansLib.Helpers
                 return;
             Array.Resize(ref _entries, Math.Max(capacity, _entries.Length * 2));
         }
+
+        /// <summary>
+        /// Get list of specified key. Will return empty list if key could not be found.
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        public IList<TValue> this[TKey key] => TryGetValue(key, out var l) ? l : Array.Empty<TValue>();
 
         /// <summary>
         /// Try to get list of specified key.
@@ -94,17 +111,11 @@ namespace ESPkMeansLib.Helpers
         {
             if (!_dict.TryGetValue(key, out var p))
             {
-                goto NOT_FOUND;
+                list = Array.Empty<TValue>();
+                return false;
             }
-            ref (bool set, TValue entry, List<TValue>? list) entry = ref _entries.DangerousGetReferenceAt(p);
-            if (!entry.set)
-                goto NOT_FOUND;
-            list = entry.list?.Count > 0 ? entry.list : new[] { entry.entry };
+            list = p.list != null ? p.list : new[] { p.entry };
             return true;
-
-        NOT_FOUND:
-            list = Array.Empty<TValue>();
-            return false;
         }
     }
 }

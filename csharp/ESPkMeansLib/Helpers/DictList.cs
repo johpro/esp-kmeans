@@ -1,4 +1,10 @@
-﻿using System;
+﻿/*
+ * Copyright (c) Johannes Knittel
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -85,12 +91,62 @@ namespace ESPkMeansLib.Helpers
             ptr = (default, list);
         }
 
+        /// <summary>
+        /// Bulk add list of values to the list of the specified key.
+        /// </summary>
+        /// <param name="key"></param>
+        /// <param name="values"></param>
+        public void AddRange(TKey key, IList<TValue> values)
+        {
+            if (values.Count == 0)
+                return;
+            if (values.Count == 1)
+            {
+                AddToList(key, values[0]);
+                return;
+            }
+
+            ref (TValue entry, List<TValue>? list) ptr = ref CollectionsMarshal.GetValueRefOrAddDefault(_dict, key, out var exists);
+
+            if (exists && ptr.list != null)
+            {
+                ptr.list.AddRange(values);
+                return;
+            }
+
+
+
+            List<TValue> list;
+            var idx = _entriesCount;
+            _entriesCount++;
+            if (idx < _availableCount)
+            {
+                list = _entries.DangerousGetReferenceAt(idx)!;
+            }
+            else
+            {
+                EnsureCapacity(_entriesCount);
+                list = new List<TValue>(values.Count+1);
+                _availableCount = _entriesCount;
+                _entries[idx] = list;
+            }
+            if(exists)
+                list.Add(ptr.entry);
+            list.AddRange(values);
+            ptr = (default, list);
+        }
+
 
         internal void EnsureCapacity(int capacity)
         {
             if (_entries.Length >= capacity)
                 return;
             Array.Resize(ref _entries, Math.Max(capacity, _entries.Length * 2));
+        }
+
+        internal void EnsureDictCapacity(int capacity)
+        {
+            _dict.EnsureCapacity(capacity);
         }
 
         /// <summary>

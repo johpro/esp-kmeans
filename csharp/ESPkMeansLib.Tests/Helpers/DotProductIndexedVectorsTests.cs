@@ -1,6 +1,13 @@
-﻿using System;
+﻿/*
+ * Copyright (c) Johannes Knittel
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using ESPkMeansLib.Helpers;
@@ -122,42 +129,70 @@ namespace ESPkMeansLib.Tests.Helpers
         public void GetKNearestNeighborsTest()
         {
             var (queryVectors, indexVectors) = CreateQueryAndIndexVectors();
-            var db = new DotProductIndexedVectors();
-            db.Set(indexVectors);
-            var thresholds = new[] { 0, 1, 3, 5, 8, 11, 20, 100, 10_000 };
-            foreach (var v in queryVectors)
+            var tmpFn = Guid.NewGuid().ToString("N");
+            try
             {
-                foreach (var k in thresholds)
+                for (int i = 0; i < 2; i++)
                 {
-                    if (v.Length == 0 || k == 0)
+                    DotProductIndexedVectors db;
+                    if (i == 0)
                     {
-                        Assert.AreEqual(0, db.GetKNearestVectors(v, k).Length);
-                        continue;
+                        db = new DotProductIndexedVectors();
+                        db.Set(indexVectors);
+                        db.ToFile(tmpFn);
                     }
-
-                    var groundTruth = indexVectors.OrderByDescending(v2 => v.DotProductWith(v2))
-                        .Take(k)
-                        .Where(v2 => v.DotProductWith(v2) > 0)
-                        .ToArray();
-
-                    var res = db.GetKNearestVectors(v, k);
-                    Trace.WriteLine($"k {k}: {res.Length} / {groundTruth.Length}");
-                    Assert.AreEqual(groundTruth.Length, res.Length);
-                    Assert.AreEqual(res.Length, res.Select(id => db.GetVectorById(id)).Intersect(groundTruth).Count());
-                    
-                    if (k != 1) continue;
-
-                    var (k1res, k1dp) = db.GetNearestVector(v);
-                    if(v.Length == 0)
-                        Assert.AreEqual(-1, k1res);
                     else
                     {
-                        Assert.AreEqual(res[0], k1res);
-                        Assert.AreEqual(v.DotProductWith(db.GetVectorById(k1res)), k1dp, 0.0001f);
+                        db = DotProductIndexedVectors.FromFile(tmpFn);
+                    }
+
+                    var thresholds = new[] { 0, 1, 3, 5, 8, 11, 20, 100, 10_000 };
+                    foreach (var v in queryVectors)
+                    {
+                        foreach (var k in thresholds)
+                        {
+                            if (v.Length == 0 || k == 0)
+                            {
+                                Assert.AreEqual(0, db.GetKNearestVectors(v, k).Length);
+                                continue;
+                            }
+
+                            var groundTruth = indexVectors
+                                .Select((v2, i) => (v2,i))
+                                .OrderByDescending(p => v.DotProductWith(p.v2))
+                                .Take(k)
+                                .Where(p => v.DotProductWith(p.v2) > 0)
+                                .Select(p => p.i)
+                                .ToArray();
+
+                            var res = db.GetKNearestVectors(v, k);
+                            Trace.WriteLine($"k {k}: {res.Length} / {groundTruth.Length}");
+                            Assert.AreEqual(groundTruth.Length, res.Length);
+                            Assert.AreEqual(res.Length, res.Intersect(groundTruth).Count());
+
+                            if (k != 1) continue;
+
+                            var (k1res, k1dp) = db.GetNearestVector(v);
+                            if (v.Length == 0)
+                                Assert.AreEqual(-1, k1res);
+                            else
+                            {
+                                Assert.AreEqual(res[0], k1res);
+                                Assert.AreEqual(v.DotProductWith(db.GetVectorById(k1res)), k1dp, 0.0001f);
+                            }
+                        }
+                        Trace.WriteLine("");
                     }
                 }
-                Trace.WriteLine("");
             }
+            finally
+            {
+                if(File.Exists(tmpFn))
+                    File.Delete(tmpFn);
+            }
+            
+            
+            
         }
 
         [TestMethod]

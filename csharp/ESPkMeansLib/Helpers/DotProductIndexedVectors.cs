@@ -8,10 +8,12 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using System.Text.Json;
 using ESPkMeansLib.Model;
 
 namespace ESPkMeansLib.Helpers
@@ -56,6 +58,60 @@ namespace ESPkMeansLib.Helpers
             public void Clear()
             {
                 TokenToVectorsMap.Clear();
+            }
+
+            public void ToWriter(BinaryWriter writer)
+            {
+                writer.Write(1); //version
+                writer.Write(MinDotProduct);
+                writer.Write(MinDotProductSquared);
+                writer.Write(MaxSquaredSum);
+                writer.Write(TokenToVectorsMap.Count);
+                foreach (var key in TokenToVectorsMap.Keys)
+                {
+                    var l = TokenToVectorsMap[key];
+                    writer.Write(key);
+                    writer.Write(l.Count);
+                    for (int i = 0; i < l.Count; i++)
+                    {
+                        var (id, num) = l[i];
+                        writer.Write(id);
+                        writer.Write(num);
+                    }
+                }
+            }
+
+            public static DotProductThItem FromReader(BinaryReader reader)
+            {
+                var version = reader.ReadInt32();
+                var dp = reader.ReadSingle();
+                var dpSquared = reader.ReadSingle();
+                var maxSqSum = reader.ReadSingle();
+                
+                var res = new DotProductThItem
+                {
+                    MinDotProduct = dp,
+                    MinDotProductSquared = dpSquared,
+                    MaxSquaredSum = maxSqSum
+                };
+
+                var dictCount = reader.ReadInt32();
+                res.TokenToVectorsMap.EnsureDictCapacity(dictCount);
+                var list = new List<(int id, int minNumOccurrences)>();
+                for (int i = 0; i < dictCount; i++)
+                {
+                    var key = reader.ReadInt32();
+                    var listCount = reader.ReadInt32();
+                    list.Clear();
+                    list.EnsureCapacity(listCount);
+                    for (int j = 0; j < listCount; j++)
+                    {
+                        list.Add((reader.ReadInt32(), reader.ReadInt32()));
+                    }
+                    res.TokenToVectorsMap.AddRange(key, list);
+                }
+
+                return res;
             }
 
 
@@ -131,6 +187,21 @@ namespace ESPkMeansLib.Helpers
                     MinDotProductSquared = minDotProduct * minDotProduct,
                     MaxSquaredSum = 1 - minDotProduct * minDotProduct
                 };
+            }
+        }
+
+        private DotProductIndexedVectors(StorageMeta meta, DotProductThItem[] maps,
+            Dictionary<int, FlexibleVector> indexedVectors, DictListInt<int> globalMap)
+        {
+            MinDotProduct = meta.MinDotProduct;
+            MaxId = meta.MaxId;
+            VectorsCount = meta.VectorsCount;
+            _map = maps;
+            _indexedVectors = indexedVectors;
+            _globalMap = globalMap;
+            if (maps.Length == 1 && maps[0].MinDotProduct <= float.Epsilon)
+            {
+                _hasOnlyZeroThreshold = true;
             }
         }
 
@@ -747,6 +818,144 @@ namespace ESPkMeansLib.Helpers
                 aPtr++;
                 len--;
             }
+        }
+
+
+
+
+        private const string StorageMetaId = "dpindex-meta.json";
+        private const string StorageBlobId = "dpindex.bin";
+        private const string StoragePrefix = "dpindex-";
+        private const int StorageBlobSignature = 872149865;
+
+        private class StorageMeta
+        {
+            public int Version { get; set; } = 1;
+
+            public float MinDotProduct { get; set; }
+            public int VectorsCount { get; set; }
+            public int MaxId { get; set; }
+        }
+
+        /// <summary>
+        /// Dump indexing structure to the specified file.
+        /// </summary>
+        /// <param name="fn"></param>
+        public void ToFile(string fn)
+        {
+            var meta = new StorageMeta
+            {
+                MinDotProduct = MinDotProduct,
+                MaxId = MaxId,
+                VectorsCount = VectorsCount,
+                Version = 1
+            };
+
+            var metaStr = JsonSerializer.Serialize(meta);
+            using var stream = new FileStream(fn, FileMode.OpenOrCreate);
+            using var zip = new ZipArchive(stream, ZipArchiveMode.Update);
+            zip.GetEntry(StorageMetaId)?.Delete();
+            var entry = zip.CreateEntry(StorageMetaId);
+            using (var entryStream = new StreamWriter(entry.Open()))
+                entryStream.Write(metaStr);
+
+
+            zip.GetEntry(StorageBlobId)?.Delete();
+            entry = zip.CreateEntry(StorageBlobId);
+            using (var w = new BinaryWriter(new BufferedStream(entry.Open())))
+            {
+                w.Write(StorageBlobSignature);
+                w.Write(_map.Length);
+                foreach (var m in _map)
+                {
+                    m.ToWriter(w);
+                }
+                w.Write(_indexedVectors.Count);
+                foreach (var v in _indexedVectors)
+                {
+                    w.Write(v.Key);
+                    v.Value.ToWriter(w);
+                }
+                w.Write(_globalMap.Count);
+                foreach (var key in _globalMap.Keys)
+                {
+                    w.Write(key);
+                    var l = _globalMap[key];
+                    w.Write(l.Count);
+                    for (int i = 0; i < l.Count; i++)
+                    {
+                        w.Write(l[i]);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Load indexing structure from specified file dump.
+        /// </summary>
+        /// <param name="fn"></param>
+        /// <returns></returns>
+        /// <exception cref="Exception"></exception>
+        public static DotProductIndexedVectors FromFile(string fn)
+        {
+            using var stream = new FileStream(fn, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+            var entry = zip.GetEntry(StorageMetaId);
+            if (entry == null)
+                throw new Exception($"not a valid {nameof(DotProductIndexedVectors)} storage file");
+
+            StorageMeta meta;
+            using (var reader = new StreamReader(entry.Open()))
+                meta = JsonSerializer.Deserialize<StorageMeta>(reader.ReadToEnd()) ?? 
+                       throw new Exception("could not deserialize meta data");
+
+            if (meta.Version < 1)
+                throw new Exception($"not a valid {nameof(DotProductIndexedVectors)} storage file");
+
+            var blobEntry = zip.GetEntry(StorageBlobId);
+            if (blobEntry == null)
+                throw new Exception($"not a valid {nameof(DotProductIndexedVectors)} storage file");
+            
+            using (var reader = new BinaryReader(new BufferedStream(blobEntry.Open())))
+            {
+                if (reader.ReadInt32() != StorageBlobSignature)
+                    throw new Exception($"not a valid {nameof(DotProductIndexedVectors)} storage file");
+                var mapLen = reader.ReadInt32();
+                var maps = new DotProductThItem[mapLen];
+                for (int i = 0; i < maps.Length; i++)
+                {
+                    maps[i] = DotProductThItem.FromReader(reader);
+                }
+
+                var len = reader.ReadInt32();
+                var indexedVectors = new Dictionary<int, FlexibleVector>(len);
+                for (int i = 0; i < len; i++)
+                {
+                    var k = reader.ReadInt32();
+                    var v = FlexibleVector.FromReader(reader);
+                    indexedVectors.Add(k, v);
+                }
+
+                len = reader.ReadInt32();
+                var globalMap = new DictListInt<int>();
+                globalMap.EnsureDictCapacity(len);
+                var tList = new List<int>();
+                for (int i = 0; i < len; i++)
+                {
+                    var k = reader.ReadInt32();
+                    var listLen = reader.ReadInt32();
+                    tList.Clear();
+                    tList.EnsureCapacity(listLen);
+                    for (int j = 0; j < listLen; j++)
+                    {
+                        tList.Add(reader.ReadInt32());
+                    }
+                    globalMap.AddRange(k, tList);
+                }
+
+                return new DotProductIndexedVectors(meta, maps, indexedVectors, globalMap);
+            }
+            
         }
     }
 }

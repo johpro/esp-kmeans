@@ -1,4 +1,10 @@
-﻿using System.Runtime.CompilerServices;
+﻿/*
+ * Copyright (c) Johannes Knittel
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace ESPkMeansLib.Helpers;
@@ -82,6 +88,55 @@ public class DictListInt<TKey> where TKey : notnull
         }
         l.Add(firstVal);
         l.Add(val);
+    }
+
+    /// <summary>
+    /// Bulk add list of values to the list of the specified key.
+    /// </summary>
+    /// <param name="key"></param>
+    /// <param name="values"></param>
+    public void AddRange(TKey key, IList<int> values)
+    {
+        if (values.Count == 0)
+            return;
+        if (values.Count == 1)
+        {
+            AddToList(key, values[0]);
+            return;
+        }
+
+        ref int ptr = ref CollectionsMarshal.GetValueRefOrAddDefault(_dict, key, out var exists);
+
+        if (exists && ptr >= 0)
+        {
+            //we have reference to list
+            _entries.DangerousGetReferenceAt(ptr).AddRange(values);
+            return;
+        }
+        
+        var prevPtr = ptr;
+
+        ptr = _entriesCount;
+        _entriesCount++;
+        List<int> l;
+        if (ptr < _availableCount)
+            l = _entries.DangerousGetReferenceAt(ptr);
+        else
+        {
+            EnsureCapacity(_entriesCount);
+            l = new List<int>(values.Count+1);
+            _entries[ptr] = l;
+            _availableCount = _entriesCount;
+        }
+
+        if(exists)
+            l.Add(~prevPtr);//first entry was saved as complement
+        l.AddRange(values);
+    }
+
+    internal void EnsureDictCapacity(int capacity)
+    {
+        _dict.EnsureCapacity(capacity);
     }
 
 

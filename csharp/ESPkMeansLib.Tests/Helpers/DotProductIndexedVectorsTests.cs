@@ -46,7 +46,7 @@ namespace ESPkMeansLib.Tests.Helpers
                             case 1:
                             case 2:
                             case 3:
-                                var diff = (float)(rnd.NextDouble() *  - .5);
+                                var diff = (float)(rnd.NextDouble() * -.5);
                                 d[k] += diff;
                                 break;
                         }
@@ -88,10 +88,17 @@ namespace ESPkMeansLib.Tests.Helpers
 
             var db = new DotProductIndexedVectors();
 
+            var watch = new Stopwatch();
 
             for (int i = 0; i < 2; i++)
             {
+                watch.Restart();
                 db.Set(indexVectors);
+                Trace.WriteLine($"{watch.Elapsed} for creating db");
+
+
+                Assert.AreEqual(indexVectors.Length, db.VectorsCount);
+
                 foreach (var qV in queryVectors)
                 {
                     foreach (var threshold in thresholds)
@@ -123,7 +130,7 @@ namespace ESPkMeansLib.Tests.Helpers
             }
 
         }
-        
+
 
         [TestMethod]
         public void GetKNearestNeighborsTest()
@@ -158,7 +165,7 @@ namespace ESPkMeansLib.Tests.Helpers
                             }
 
                             var groundTruth = indexVectors
-                                .Select((v2, i) => (v2,i))
+                                .Select((v2, i) => (v2, i))
                                 .OrderByDescending(p => v.DotProductWith(p.v2))
                                 .Take(k)
                                 .Where(p => v.DotProductWith(p.v2) > 0)
@@ -187,12 +194,12 @@ namespace ESPkMeansLib.Tests.Helpers
             }
             finally
             {
-                if(File.Exists(tmpFn))
+                if (File.Exists(tmpFn))
                     File.Delete(tmpFn);
             }
-            
-            
-            
+
+
+
         }
 
         [TestMethod]
@@ -200,11 +207,13 @@ namespace ESPkMeansLib.Tests.Helpers
         {
             var set = FlexibleVectorTests.CreateRandomVectors(5_000, true, 2_000);
             Parallel.For(0, set.Length, i => set[i].NormalizeAsUnitVector());
-            var watch = Stopwatch.StartNew();
             var db = new DotProductIndexedVectors();
+            db.Set(set.Take(100).ToArray()); //warmup
+            var watch = Stopwatch.StartNew();
+            db = new DotProductIndexedVectors();
             db.Set(set);
             Trace.WriteLine($"{watch.Elapsed} default thresholds"); watch.Restart();
-            db = new DotProductIndexedVectors(new []{0f});
+            db = new DotProductIndexedVectors(new[] { 0f });
             db.Set(set);
             Trace.WriteLine($"{watch.Elapsed} threshold 0"); watch.Restart();
             db = new DotProductIndexedVectors(new[] { 0.01f });
@@ -221,14 +230,14 @@ namespace ESPkMeansLib.Tests.Helpers
             foreach (var vec in vecs)
             {
                 var res = new float[vec.Length];
-                fixed(float* v = vec, v2 = res)
+                fixed (float* v = vec, v2 = res)
                     DotProductIndexedVectors.Square(res.Length, v, v2);
                 for (int i = 0; i < res.Length; i++)
                 {
-                    Assert.AreEqual(vec[i]*vec[i], res[i], 0.0001f);
+                    Assert.AreEqual(vec[i] * vec[i], res[i], 0.0001f);
                 }
             }
-            
+
 
         }
     }

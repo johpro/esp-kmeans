@@ -27,7 +27,7 @@ namespace ESPkMeansLib.Helpers
     {
 
         private readonly Dictionary<TKey, (TValue entry, List<TValue>? list)> _dict = new();
-        private List<TValue>?[] _entries = new List<TValue>[2];
+        private List<TValue>?[] _entries = new List<TValue>[4];
         private int _entriesCount;
         private int _availableCount;
 
@@ -81,7 +81,7 @@ namespace ESPkMeansLib.Helpers
             else
             {
                 EnsureCapacity(_entriesCount);
-                list = new List<TValue>(2);
+                list = new List<TValue>(4);
                 _availableCount = _entriesCount;
                 _entries[idx] = list;
             }
@@ -113,9 +113,7 @@ namespace ESPkMeansLib.Helpers
                 ptr.list.AddRange(values);
                 return;
             }
-
-
-
+            
             List<TValue> list;
             var idx = _entriesCount;
             _entriesCount++;
@@ -141,7 +139,10 @@ namespace ESPkMeansLib.Helpers
         {
             if (_entries.Length >= capacity)
                 return;
-            Array.Resize(ref _entries, Math.Max(capacity, _entries.Length * 2));
+            var newcapacity = _entries.Length * 2;
+            if ((uint)newcapacity > Array.MaxLength) newcapacity = Array.MaxLength;
+            if (newcapacity < capacity) newcapacity = capacity;
+            Array.Resize(ref _entries, newcapacity);
         }
 
         internal void EnsureDictCapacity(int capacity)

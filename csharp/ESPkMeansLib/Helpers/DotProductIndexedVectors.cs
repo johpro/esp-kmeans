@@ -40,6 +40,7 @@ namespace ESPkMeansLib.Helpers
         public int VectorsCount { get; private set; }
         public int MaxId { get; private set; }
 
+        public static readonly float[] DefaultThresholds = { 0.1f, 0.25f, 0.4f, 0.6f };
 
         class DotProductThItem
         {
@@ -132,7 +133,7 @@ namespace ESPkMeansLib.Helpers
         /// <summary>
         /// Create indexing structure based on default thresholds (0.1, 0.25, 0.4f, and 0.6).
         /// </summary>
-        public DotProductIndexedVectors() : this(new[] { 0.1f, 0.25f, 0.4f, 0.6f })
+        public DotProductIndexedVectors() : this(DefaultThresholds)
         {
         }
 
@@ -204,6 +205,7 @@ namespace ESPkMeansLib.Helpers
                 _hasOnlyZeroThreshold = true;
             }
         }
+        
 
         /// <summary>
         /// Clear the index
@@ -228,11 +230,39 @@ namespace ESPkMeansLib.Helpers
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         public void Set(FlexibleVector[] vectors)
         {
+            if (vectors.Length == 0)
+                return;
+            if(_globalMap.AvailableCount == 0)
+                PrepareGlobalMapCapacity(vectors);
             Clear();
             _indexedVectors.EnsureCapacity(vectors.Length);
             for (var i = 0; i < vectors.Length; i++)
             {
                 Add(vectors[i], i);
+            }
+        }
+
+        /// <summary>
+        /// Pass through all vectors to count distribution of indexes so that we can initialize the capacity of the global map
+        /// </summary>
+        /// <param name="vectors"></param>
+        private void PrepareGlobalMapCapacity(FlexibleVector[] vectors)
+        {
+            var countDict = new Dictionary<int, int>(vectors.Max(v => v.Length));
+            foreach (var v in vectors)
+            {
+                var indexes = v.Indexes;
+                for (int i = 0; i < indexes.Length; i++)
+                {
+                    countDict.IncrementItem(indexes[i]);
+                }
+            }
+            _globalMap.EnsureDictCapacity(countDict.Count);
+            foreach (var p in countDict)
+            {
+                if(p.Value <= 1)
+                    continue;
+                _globalMap.EnsureListCapacity(p.Key, p.Value);
             }
         }
 
@@ -312,7 +342,7 @@ namespace ESPkMeansLib.Helpers
             //vec.Values.CopyTo(values);
             vec.CopyTo(indexes, values);
             //we are only interested in absolute values
-            for (int i = 0; i < values.Length; i++)
+            for (int i = 0; i < len; i++)
             {
                 var val = values[i];
                 if (val < 0)
@@ -418,7 +448,8 @@ namespace ESPkMeansLib.Helpers
         {
             if (minDotProduct < 0)
                 throw new ArgumentException("indexing structure does not support negative dot product threshold");
-
+            if(vector.Length == 0)
+                return (-1, default);
             var countDict = EmptyDict;
             try
             {
@@ -484,7 +515,7 @@ namespace ESPkMeansLib.Helpers
         {
             if (minDotProduct < 0)
                 throw new ArgumentException("indexing structure does not support negative dot product threshold");
-            if (k <= 0)
+            if (k <= 0 || vector.Length == 0)
                 return Array.Empty<int>();
 
             if (_intListBag.TryTake(out var vecList))

@@ -22,11 +22,13 @@ public class DictListInt<TKey> where TKey : notnull
 {
 
     private readonly Dictionary<TKey, int> _dict = new();
-    private List<int>[] _entries = new List<int>[2];
+    private List<int>[] _entries = new List<int>[4];
     private int _entriesCount;
     private int _availableCount;
     public int Count => _dict.Count;
     public int EntriesCount => _entriesCount;
+
+    internal int AvailableCount => _availableCount;
     //public int TotalEntriesCount => _totalCount;
     public ICollection<TKey> Keys => _dict.Keys;
 
@@ -51,7 +53,7 @@ public class DictListInt<TKey> where TKey : notnull
     /// <param name="key"></param>
     /// <param name="val">Value to add, must be non-negative</param>
     /// <exception cref="ArgumentOutOfRangeException"></exception>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public void AddToList(TKey key, int val)
     {
         if (val < 0)
@@ -74,18 +76,7 @@ public class DictListInt<TKey> where TKey : notnull
 
         //first entry was saved as complement
         var firstVal = ~ptr;
-        ptr = _entriesCount;
-        _entriesCount++;
-        List<int> l;
-        if (ptr < _availableCount)
-            l = _entries.DangerousGetReferenceAt(ptr);
-        else
-        {
-            EnsureCapacity(_entriesCount);
-            l = new List<int>(2);
-            _entries[ptr] = l;
-            _availableCount = _entriesCount;
-        }
+        var l = InitList(ref ptr);
         l.Add(firstVal);
         l.Add(val);
     }
@@ -115,36 +106,74 @@ public class DictListInt<TKey> where TKey : notnull
         }
         
         var prevPtr = ptr;
-
-        ptr = _entriesCount;
-        _entriesCount++;
-        List<int> l;
-        if (ptr < _availableCount)
-            l = _entries.DangerousGetReferenceAt(ptr);
-        else
-        {
-            EnsureCapacity(_entriesCount);
-            l = new List<int>(values.Count+1);
-            _entries[ptr] = l;
-            _availableCount = _entriesCount;
-        }
-
+        var l = InitList(ref ptr, values.Count + 1);
         if(exists)
             l.Add(~prevPtr);//first entry was saved as complement
         l.AddRange(values);
     }
 
-    internal void EnsureDictCapacity(int capacity)
+
+    /// <summary>
+    /// Ensure that list of specified key exists and has specified capacity.
+    /// </summary>
+    /// <param name="key"></param>
+    /// <param name="capacity"></param>
+    public void EnsureListCapacity(TKey key, int capacity)
+    {
+        ref int ptr = ref CollectionsMarshal.GetValueRefOrAddDefault(_dict, key, out var exists);
+
+        if (exists && ptr >= 0)
+        {
+            //we have reference to list
+            _entries.DangerousGetReferenceAt(ptr).EnsureCapacity(capacity);
+            return;
+        }
+
+        var prevPtr = ptr;
+        var l = InitList(ref ptr, capacity);
+        if (exists)
+            l.Add(~prevPtr);//first entry was saved as complements
+    }
+
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private List<int> InitList(ref int entriesPtr, int listCapacity = 4)
+    {
+        entriesPtr = _entriesCount;
+        _entriesCount++;
+        List<int> l;
+        if (entriesPtr < _availableCount)
+            l = _entries.DangerousGetReferenceAt(entriesPtr);
+        else
+        {
+            EnsureCapacity(_entriesCount);
+            l = new List<int>(listCapacity);
+            _entries[entriesPtr] = l;
+            _availableCount = _entriesCount;
+        }
+
+        return l;
+    }
+
+    /// <summary>
+    /// Ensure capacity of underlying dictionary that stores all keys
+    /// </summary>
+    /// <param name="capacity"></param>
+    public void EnsureDictCapacity(int capacity)
     {
         _dict.EnsureCapacity(capacity);
     }
+
 
 
     internal void EnsureCapacity(int capacity)
     {
         if (_entries.Length >= capacity)
             return;
-        Array.Resize(ref _entries, Math.Max(capacity, _entries.Length * 2));
+        var newcapacity = _entries.Length * 2;
+        if ((uint)newcapacity > Array.MaxLength) newcapacity = Array.MaxLength;
+        if (newcapacity < capacity) newcapacity = capacity;
+        Array.Resize(ref _entries, newcapacity);
     }
 
     /// <summary>

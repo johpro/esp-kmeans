@@ -974,10 +974,23 @@ namespace ESPkMeansLib.Helpers
         }
 
         /// <summary>
-        /// Dump indexing structure to the specified file.
+        /// Dump indexing structure to the specified file as ZIP archive.
+        /// Will update archive if file exists.
         /// </summary>
         /// <param name="fn"></param>
         public void ToFile(string fn)
+        {
+            var fExists = File.Exists(fn);
+            using var stream = new FileStream(fn, FileMode.OpenOrCreate);
+            using var zip = new ZipArchive(stream, fExists ? ZipArchiveMode.Update : ZipArchiveMode.Create);
+            ToArchive(zip);
+        }
+
+        /// <summary>
+        /// Dump indexing structure to specified archive.
+        /// </summary>
+        /// <param name="zip"></param>
+        public void ToArchive(ZipArchive zip)
         {
             var meta = new StorageMeta
             {
@@ -988,15 +1001,14 @@ namespace ESPkMeansLib.Helpers
             };
 
             var metaStr = JsonSerializer.Serialize(meta);
-            using var stream = new FileStream(fn, FileMode.OpenOrCreate);
-            using var zip = new ZipArchive(stream, ZipArchiveMode.Update);
-            zip.GetEntry(StorageMetaId)?.Delete();
+            if(zip.Mode == ZipArchiveMode.Update)
+                zip.GetEntry(StorageMetaId)?.Delete();
             var entry = zip.CreateEntry(StorageMetaId);
             using (var entryStream = new StreamWriter(entry.Open()))
                 entryStream.Write(metaStr);
 
-
-            zip.GetEntry(StorageBlobId)?.Delete();
+            if (zip.Mode == ZipArchiveMode.Update)
+                zip.GetEntry(StorageBlobId)?.Delete();
             entry = zip.CreateEntry(StorageBlobId);
             using (var w = new BinaryWriter(new BufferedStream(entry.Open())))
             {

@@ -548,13 +548,27 @@ namespace ESPkMeansLib.Helpers
                         return Array.Empty<int>();
                     var cosDistanceList = ArrayPool<float>.Shared.Rent(vecList.Count);
                     var numAboveTh = 0;
-                    for (int j = 0; j < vecList.Count; j++)
+                    if (vector.Length * vecList.Count > 10_000)
                     {
-                        var dp = vector.DotProductWith(_indexedVectors[vecList[j]]);
-                        cosDistanceList[j] = 1 - dp;
-                        if (dp >= th)
-                            numAboveTh++;
+                        Parallel.For(0, vecList.Count, j =>
+                        {
+                            var dp = vector.DotProductWith(_indexedVectors[vecList[j]]);
+                            cosDistanceList[j] = 1 - dp;
+                            if (dp >= th)
+                                Interlocked.Increment(ref numAboveTh);
+                        });
                     }
+                    else
+                    {
+                        for (int j = 0; j < vecList.Count; j++)
+                        {
+                            var dp = vector.DotProductWith(_indexedVectors[vecList[j]]);
+                            cosDistanceList[j] = 1 - dp;
+                            if (dp >= th)
+                                numAboveTh++;
+                        }
+                    }
+                    
 
                     if (!isLastBody && numAboveTh < k)
                     {

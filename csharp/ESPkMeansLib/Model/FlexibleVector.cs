@@ -1235,6 +1235,23 @@ namespace ESPkMeansLib.Model
         }
 
         /// <summary>
+        /// Return new vector in which the sparse (index, value) entry pairs are sorted in descending order of the value.
+        /// </summary>
+        /// <returns></returns>
+        /// <exception cref="InvalidOperationException">throws an exception if the vector is dense</exception>
+        public FlexibleVector ToSortedVector()
+        {
+            if (_indexes == null)
+                throw new InvalidOperationException("only sparse vectors can be sorted");
+            var indexes = _indexes.ToArray();
+            var values = _values.ToArray();
+            Array.Sort(values, indexes);
+            Array.Reverse(indexes);
+            Array.Reverse(values);
+            return new FlexibleVector(indexes, values);
+        }
+
+        /// <summary>
         /// returns true if max-norm |this-other| is smaller than 1e-6
         /// </summary>
         /// <param name="other"></param>

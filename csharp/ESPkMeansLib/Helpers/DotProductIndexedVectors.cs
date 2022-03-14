@@ -675,8 +675,16 @@ namespace ESPkMeansLib.Helpers
             throw new Exception("code path should not be reached");
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private IEnumerable<int> GetNearbyVectorsCountStrategy(DotProductThItem map, FlexibleVector vector,
+            Dictionary<int, int>? cachedCountDict = null, int cachedOffset = 0)
+        {
+            if (vector.Length < 8 || _map.Length == 1 && _map[0].MinDotProduct < 0.2f)
+                return GetNearbyVectorsCountStrategyDefault(map, vector, cachedCountDict, cachedOffset);
+            return GetNearbyVectorsCountStrategyStaggered(map, vector, cachedCountDict, cachedOffset);
+        }
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private IEnumerable<int> GetNearbyVectorsCountStrategyDefault(DotProductThItem map, FlexibleVector vector,
             Dictionary<int, int>? cachedCountDict = null, int cachedOffset = 0)
         {
             if (_vectorHashSetBag.TryTake(out var hashSet))
@@ -688,7 +696,7 @@ namespace ESPkMeansLib.Helpers
             var indexes = vector.Indexes;
             var countDict = cachedCountDict ?? EmptyDict;
             var offset = cachedOffset;
-            //in the case of only one threshold we do not need to count with global map (and global map is also not populated)
+            
             if (cachedCountDict == null)
                 countDict = CountAffectedClusters(indexes, out offset);
 
@@ -707,6 +715,89 @@ namespace ESPkMeansLib.Helpers
                     }
                     if (hashSet.Count == VectorsCount)
                         break; //already all means returned
+                }
+            }
+
+            foreach (var k in hashSet)
+            {
+                yield return k;
+            }
+
+            if (cachedCountDict == null && countDict != EmptyDict)
+            {
+                _vectorDictionaryBag.Add(countDict);
+            }
+            _vectorHashSetBag.Add(hashSet);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private IEnumerable<int> GetNearbyVectorsCountStrategyStaggered(DotProductThItem map, FlexibleVector vector,
+            Dictionary<int, int>? cachedCountDict = null, int cachedOffset = 0)
+        {
+            if (_vectorHashSetBag.TryTake(out var hashSet))
+                hashSet.Clear();
+            else
+                hashSet = new HashSet<int>();
+
+            var origMap = map;
+            var origMapIndex = Array.IndexOf(_map, map);
+            var nextMapIndex = origMapIndex + 1;
+            DotProductThItem? nextMap = null;
+            float squaredSumForNextMap = 1f; //if we reach this sum of processed entries we can switch to next map
+            float maxSquaredSum = map.MaxSquaredSum; //if we reach this sum of processed entries we cannot reach th anymore
+            if (nextMapIndex < _map.Length)
+            {
+                nextMap = _map[nextMapIndex];
+                //if the remaining length falls below this value we can switch to next map
+                //since maxPossibleLengthOfInputVec * map.MinDotProduct is the actual dot product threshold
+                var reqVectorLen = origMap.MinDotProduct / nextMap.MinDotProduct;
+                squaredSumForNextMap = 1 - reqVectorLen * reqVectorLen + float.Epsilon;
+            }
+
+
+            var vecLen = vector.Length;
+            var indexes = vector.Indexes;
+            var values = vector.Values;
+            var countDict = cachedCountDict ?? EmptyDict;
+            var offset = cachedOffset;
+
+            if (cachedCountDict == null)
+                countDict = CountAffectedClusters(indexes, out offset);
+
+            var squaredSum = 0f;
+            for (int j = 0; j < indexes.Length; j++)
+            {
+                var idx = indexes[j];
+                if (map.TokenToVectorsMap.TryGetValue(idx, out var vecList))
+                {
+                    for (int i = 0; i < vecList.Count; i++)
+                    {
+                        var (id, minNumOccurrences) = vecList[i];
+                        if (minNumOccurrences == 1 || minNumOccurrences <= vecLen && countDict.GetValueOrDefault(id) >= minNumOccurrences - offset)
+                        {
+                            hashSet.Add(id);
+                        }
+                    }
+                    if (hashSet.Count == VectorsCount)
+                        break; //already all means returned
+                }
+
+                var val = values[j];
+                squaredSum += val*val;
+                if (squaredSum > maxSquaredSum)
+                    break;
+                if (nextMap != null && squaredSum > squaredSumForNextMap)
+                {
+                    map = nextMap;
+                    nextMapIndex++;
+                    if (nextMapIndex < _map.Length)
+                    {
+                        nextMap = _map[nextMapIndex];
+                        var reqVectorLen = origMap.MinDotProduct / nextMap.MinDotProduct;
+                        squaredSumForNextMap = 1 - reqVectorLen * reqVectorLen + float.Epsilon;
+                    }
+                    else
+                        nextMap = null;
                 }
             }
 

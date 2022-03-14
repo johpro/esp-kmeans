@@ -155,6 +155,8 @@ namespace ESPkMeansLib
         /// <exception cref="ArgumentException"></exception>
         public (int[] clustering, FlexibleVector[] clusterMeans) Cluster(FlexibleVector[] data, int numClusters, int numRuns = 1)
         {
+            if (data.Length == 0)
+                throw new ArgumentException("clustering expects at least one data item");
             if (numRuns < 1)
                 throw new ArgumentException("invalid number of runs specified");
             
@@ -174,9 +176,18 @@ namespace ESPkMeansLib
                     throw new ArgumentException($"dense vectors have to be of same size ({dimension}), but got length {v.Length}");
             }
 
-            //this method may be called concurrently on same data array
+            
             if (UseSphericalKMeans)
             {
+                //clone array since we may change entries
+                data = data.ToArray();
+
+                if (isSparse && UseIndexedMeans && numClusters >= MinNumClustersForIndexedMeans)
+                {
+                    //indexing strategy benefits a lot if input vectors are sorted in descending order of the entry values
+                    EnsureSortedVectors(data);
+                }
+                //this should always come last so that the flag remains set
                 EnsureUnitVectors(data);
             }
 
@@ -525,6 +536,29 @@ namespace ESPkMeansLib
                     if (createdNew)
                         Interlocked.Exchange(ref data[i], newItem);
                 }
+            });
+
+            Thread.MemoryBarrier();
+        }
+
+        private static void EnsureSortedVectors(FlexibleVector[] data)
+        {
+            var partition = Partitioner.Create(0, data.Length);
+
+            Parallel.ForEach(partition, range =>
+            {
+                for (int i = range.Item1; i < range.Item2; i++)
+                {
+                    var v = data[i];
+                    var values = v.Values;
+                    for (int j = 1; j < values.Length; j++)
+                    {
+                        if (values[j] <= values[j - 1]) continue;
+                        data[i] = v.ToSortedVector();
+                        break;
+                    }
+                }
+                Thread.MemoryBarrier();
             });
 
             Thread.MemoryBarrier();

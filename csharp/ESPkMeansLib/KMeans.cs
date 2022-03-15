@@ -182,11 +182,9 @@ namespace ESPkMeansLib
                 //clone array since we may change entries
                 data = data.ToArray();
 
-                if (isSparse && UseIndexedMeans && numClusters >= MinNumClustersForIndexedMeans)
-                {
-                    //indexing strategy benefits a lot if input vectors are sorted in descending order of the entry values
-                    EnsureSortedVectors(data);
-                }
+                //if (isSparse && UseIndexedMeans && numClusters >= MinNumClustersForIndexedMeans)
+                //    EnsureSortedVectors(data);
+                
                 //this should always come last so that the flag remains set
                 EnsureUnitVectors(data);
             }
@@ -468,7 +466,10 @@ namespace ESPkMeansLib
                     (clustersChangedMap.Count == 0 ||
                      clustersChangedMap.Count >= MinNumClustersForIndexedMeans &&
                      numDotProductsIndexed > 0 &&
-                     clustersChangedMap.Count > numDotProductsIndexed))
+                     clustersChangedMap.Count > numDotProductsIndexed ||
+                     clustersChangedMap.Count >= MinNumClustersForIndexedMeans/4 &&
+                     numDotProductsIndexed > 0 &&
+                     clustersChangedMap.Count/2 > numDotProductsIndexed))
                     //only use INDEX strategy if number of changed clusters is high enough and other requirements set (spherical etc.)
                     numChanged = UpdateClusteringIndexed(data, clustering, clusterMeans,
                         clustersChangedMap, clusteringChanges, indexedMeans, out numDotProductsIndexed);

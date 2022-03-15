@@ -62,7 +62,7 @@ namespace ESPkMeansLib
         /// <summary>
         /// Hyper-parameter that determines when to use the indexing structure for Spherical k-Means on sparse data (indexing structure does not pay off if only a handful of centroids change between iterations)
         /// </summary>
-        public int MinNumClustersForIndexedMeans { get; set; } = 120;
+        public int MinNumClustersForIndexedMeans { get; set; } = 30;
 
         private static T[] GetRandomSample<T>(T[] data, double ratio, int minItems = 1)
         {
@@ -159,7 +159,7 @@ namespace ESPkMeansLib
                 throw new ArgumentException("clustering expects at least one data item");
             if (numRuns < 1)
                 throw new ArgumentException("invalid number of runs specified");
-            
+
             var isSparse = data[0].IsSparse;
             var dimension = 0;
             if (!isSparse)
@@ -176,14 +176,11 @@ namespace ESPkMeansLib
                     throw new ArgumentException($"dense vectors have to be of same size ({dimension}), but got length {v.Length}");
             }
 
-            
+
             if (UseSphericalKMeans)
             {
                 //clone array since we may change entries
                 data = data.ToArray();
-
-                //if (isSparse && UseIndexedMeans && numClusters >= MinNumClustersForIndexedMeans)
-                //    EnsureSortedVectors(data);
                 
                 //this should always come last so that the flag remains set
                 EnsureUnitVectors(data);
@@ -199,7 +196,7 @@ namespace ESPkMeansLib
             {
                 var (clustering, means) = ClusterRun(data, numClusters);
                 var distortion = EvaluationMetrics.CalculateDistortion(data, clustering, means, UseSphericalKMeans);
-                if(bClustering != null && distortion >= bestDistortion)
+                if (bClustering != null && distortion >= bestDistortion)
                     continue;
                 bClustering = clustering;
                 bMeans = means;
@@ -226,21 +223,20 @@ namespace ESPkMeansLib
                 //calculate clustering on a random sample of the data, but return complete, final clustering
                 data = GetRandomSample(data, SamplingRatio, numClusters);
             }
-            
+
             bool changed = true; // was there a change in at least one cluster assignment?
             
             DotProductIndexedVectors? indexedMeans = null;
             if (UseSphericalKMeans && UseIndexedMeans && numClusters >= MinNumClustersForIndexedMeans)
                 indexedMeans = new DotProductIndexedVectors();
-
-
+            
             var watch = Stopwatch.StartNew();
 
             var initNumClusters = numClusters;
             var clustering = UseKMeansPlusPlusInitialization
                 ? InitClusteringPlusPLus(data, ref numClusters)
                 : InitClustering(data, ref numClusters);
-            
+
             if (EnableLogging)
                 Trace.WriteLine($"InitClustering in {watch.Elapsed} with {numClusters} centroids ({initNumClusters} wanted)"); watch.Restart();
 
@@ -251,7 +247,7 @@ namespace ESPkMeansLib
                     throw new Exception($"numClusters is {numClusters}, but got cluster idx {i}");
             }*/
 
-            
+
 
             float[][]? denseMeans = null;
 
@@ -291,9 +287,7 @@ namespace ESPkMeansLib
             }
 
             var clustersChangedMap = new List<int>();
-
-            var numDotProductsIndexed = 0;
-
+            
             var clusterReAssignMap = new int[numClusters];
             var removedClusterIndexes = new List<int>();
             var numChanged = 0;
@@ -381,7 +375,6 @@ namespace ESPkMeansLib
                         RemoveArrayEntry(clusterCounts, i);
                     }
 
-
                     numClusters -= numRemoved;
                     if (!isSparse)
                         Array.Resize(ref denseMeans, numClusters);
@@ -407,10 +400,8 @@ namespace ESPkMeansLib
 
                         clustering[i] = newId;
                     }
-
-
+                    
                     Array.Resize(ref clusterReAssignMap, numClusters);
-
                     if (EnableLogging)
                         Trace.WriteLine($"{numRemoved} redundant clusters removed");
                 }
@@ -461,31 +452,21 @@ namespace ESPkMeansLib
                     break; //no need to update cluster with k = 1
 
                 updateWatch.Start();
-                //if(UseSphericalKMeans)
                 if (indexedMeans != null &&
                     (clustersChangedMap.Count == 0 ||
-                     clustersChangedMap.Count >= MinNumClustersForIndexedMeans &&
-                     numDotProductsIndexed > 0 &&
-                     clustersChangedMap.Count > numDotProductsIndexed ||
-                     clustersChangedMap.Count >= MinNumClustersForIndexedMeans/4 &&
-                     numDotProductsIndexed > 0 &&
-                     clustersChangedMap.Count/2 > numDotProductsIndexed))
+                     clustersChangedMap.Count >= MinNumClustersForIndexedMeans ))
                     //only use INDEX strategy if number of changed clusters is high enough and other requirements set (spherical etc.)
-                    numChanged = UpdateClusteringIndexed(data, clustering, clusterMeans,
-                        clustersChangedMap, clusteringChanges, indexedMeans, out numDotProductsIndexed);
+                    numChanged = UpdateClusteringIndexed(data, clustering, clusterMeans, clusteringChanges, indexedMeans);
                 else
                     numChanged = UpdateClustering(data, clustering, clusterMeans, clustersChangedMap, clusteringChanges);
-                //else
-                //    numChanged = UpdateClusteringElkan(data, clustering, clusterMeans, clustersChangedMap, clusteringChanges, clusterDistances);
+               
                 updateWatch.Stop();
 
                 if (hasConverged)
                     break;
 
                 //Trace.WriteLine($"numChanged: {noChanged}");
-
                 changed = numChanged >= 1;
-
             }
 
             if (clusteringChanges != null)
@@ -499,8 +480,7 @@ namespace ESPkMeansLib
 
             if (EnableLogging)
                 Trace.WriteLine($"UpdateMeans {meansWatch.Elapsed} | UpdateClusters {updateWatch.Elapsed} | transform {transformWatch.Elapsed} | {ct} iterations");
-
-
+            
             return (clustering, clusterMeans)!;
         }
 
@@ -596,7 +576,7 @@ namespace ESPkMeansLib
                 numClusters = data.Length;
                 return Enumerable.Range(0, data.Length).ToArray();
             }
-            
+
             var random = new Random();
 
             var clusterCentroids = new FlexibleVector[numClusters];
@@ -637,7 +617,7 @@ namespace ESPkMeansLib
             var clusterCentroids = new FlexibleVector[numClusters];
 
             //if every data item is zero, we will only find one centroid and know that there cannot be more than one cluster
-         
+
             var partition = Partitioner.Create(0, data.Length);
 
             int k = 0;
@@ -713,7 +693,7 @@ namespace ESPkMeansLib
             }
 
             numClusters = k;
-            if(k < clusterCentroids.Length)
+            if (k < clusterCentroids.Length)
                 Array.Resize(ref clusterCentroids, k);
 
             ArrayPool<float>.Shared.Return(distances);
@@ -834,7 +814,7 @@ namespace ESPkMeansLib
                         }
                     }
 
-                    
+
                     clustering[i] = clusterId;
                     if (distances != null)
                         distances[i] = 1 - bestDistance;
@@ -847,7 +827,7 @@ namespace ESPkMeansLib
             return clustering;
         }
 
-        
+
         /// <summary>
         /// Count cluster sizes based on provided clustering
         /// </summary>
@@ -865,7 +845,7 @@ namespace ESPkMeansLib
 
             return clusterCounts;
         }
-        
+
 
 
         internal static void UpdateMeansDense(FlexibleVector[] data, int[] clustering, int[] clusterCounts, float[][] means,
@@ -885,7 +865,7 @@ namespace ESPkMeansLib
                     ++clusterCounts[cluster];
                 }
             }
-            
+
             foreach (var arr in means)
             {
                 Array.Clear(arr, 0, arr.Length);
@@ -925,38 +905,19 @@ namespace ESPkMeansLib
 
 
         private int UpdateClusteringIndexed(FlexibleVector[] data, int[] clustering,
-           FlexibleVector[] means, List<int> clustersChangedMapSrc,
-           (int clusterIdxFrom, int clusterIdxTo, int dataIdx)[]? changes, DotProductIndexedVectors indexedMeans,
-           out int numDotProductsIndexed)
+           FlexibleVector[] means, (int clusterIdxFrom, int clusterIdxTo, int dataIdx)[]? changes, 
+           DotProductIndexedVectors indexedMeans)
         {
             if (means.Length <= 1)
             {
-                numDotProductsIndexed = 0;
                 return 0;
             }
 
-            for (int i = 0; i < means.Length; i++)
-            {
-                means[i].Tag = i;
-            }
-
-            var noChanges = 0;
-
-            var completeMap = Enumerable.Range(0, means.Length).ToArray();
-            var clustersChangedMap = clustersChangedMapSrc.Count == 0 ? null : clustersChangedMapSrc.ToArray();
-            var clustersChangedMapSet = clustersChangedMap?.ToHashSet();
+            var numChanges = 0;
             var watch = Stopwatch.StartNew();
             indexedMeans.Set(means);
             if (EnableVerboseLogging)
                 Trace.WriteLine($"indexed means in {watch.Elapsed}");
-            var minMaxSimilarity = indexedMeans.MinDotProduct + 0.0001f;
-
-            var numIndexedBranches = 0;
-            var numNonIndexedBranches = 0;
-            var numDotProductsIndexedBranches = 0L;
-            var numDotProductsNonIndexedBranches = 0L;
-
-            var numMeansDivBy50 = means.Length / 50;
 
             //process items in batches to improve efficiency of parallelism for higher data set sizes
             var batchSize = Math.Max(1, Environment.ProcessorCount) * 3_000;
@@ -970,93 +931,23 @@ namespace ESPkMeansLib
                     for (int i = range.Item1; i < range.Item2; ++i)
                     {
                         var curRow = data[i];
-
                         var prevClusterId = clustering[i];
-                        var map = completeMap;
-
-                        var maxSimilarity = curRow.DotProductWith(means[prevClusterId]);
-                        var newClusterId = prevClusterId;
-                        var checkOnlyChangedClusters = false;
-
-                        if (clustersChangedMapSet != null && !clustersChangedMapSet.Contains(prevClusterId))
-                        {
-                            map = clustersChangedMap;
-                            checkOnlyChangedClusters = true;
-                        }
-
-                        var isIndexedBranch = maxSimilarity >= minMaxSimilarity;
-                        var useIndex = isIndexedBranch || curRow.Length < numMeansDivBy50;
-
-                        if (useIndex)
-                        {
-                            var count = 0;
-                            foreach (var k in indexedMeans.GetNearbyVectors(curRow, maxSimilarity))
-                            {
-                                if (k == prevClusterId ||
-                                    checkOnlyChangedClusters && !clustersChangedMapSet!.Contains(k))
-                                    continue;
-
-                                count++;
-
-                                var similarity = curRow.DotProductWith(means[k]);
-                                if (similarity > maxSimilarity)
-                                {
-                                    maxSimilarity = similarity;
-                                    newClusterId = k;
-                                }
-                            }
-
-                            //if (isIndexedBranch)
-                            // {
-                            Interlocked.Increment(ref numIndexedBranches);
-                            Interlocked.Add(ref numDotProductsIndexedBranches, count);
-                            /*}
-                            else
-                            {
-                                Interlocked.Increment(ref numNonIndexedBranches);
-                                Interlocked.Add(ref numDotProductsNonIndexedBranches, count);
-                            }*/
-                        }
-                        else
-                        {
-                            foreach (var k in map!)
-                            {
-                                if (k == prevClusterId ||
-                                    checkOnlyChangedClusters && !clustersChangedMapSet!.Contains(k))
-                                    continue;
-
-                                var meansVec = means[k];
-
-                                var similarity = curRow.DotProductWith(meansVec);
-                                if (similarity > maxSimilarity)
-                                {
-                                    maxSimilarity = similarity;
-                                    newClusterId = k;
-                                }
-                            }
-
-
-                            Interlocked.Increment(ref numNonIndexedBranches);
-                            Interlocked.Add(ref numDotProductsNonIndexedBranches, map.Length);
-                        }
-
+                        var (k, _) = indexedMeans.GetNearestVectorArrayDict(curRow);
+                        var newClusterId = k;
                         if (newClusterId < 0)
                             throw new Exception("got erroneous newClusterId of " + newClusterId);
                         if (newClusterId != prevClusterId)
                         {
-                            var curChangesCount = Interlocked.Increment(ref noChanges);
+                            var curChangesCount = Interlocked.Increment(ref numChanges);
                             var changesIdx = curChangesCount - 1;
                             if (changes != null && changesIdx < changes.Length)
                             {
                                 //we just keep track of changes so that we can calculate means afterwards faster
                                 changes[changesIdx] = (prevClusterId, newClusterId, i);
                             }
-
                             clustering[i] = newClusterId;
                         }
                     }
-
-
                     Thread.MemoryBarrier();
                 });
             }
@@ -1064,15 +955,10 @@ namespace ESPkMeansLib
             Thread.MemoryBarrier();
 
             if (EnableVerboseLogging)
-                Trace.WriteLine($"{numIndexedBranches / (double)data.Length:P2} items processed with indexing," +
-                                $"{numDotProductsIndexedBranches / Math.Max(1, numIndexedBranches)} vs {numDotProductsNonIndexedBranches / Math.Max(1, numNonIndexedBranches)}  dot p. indexed / non-indexed ," +
-                                //$"{FlexibleVector.NumEntriesNull} null vs. {FlexibleVector.NumEntriesNonNull} non-null," +
-                                $" total duration {watch.Elapsed}");
+                Trace.WriteLine($"items processed with indexing, total duration {watch.Elapsed}");
             //Trace.WriteLine($"{noChanges} total changes, {hasClusterChanged.Count(b => b)} / {hasClusterChanged.Length} clusters changed");
-            numDotProductsIndexed = (int)(numIndexedBranches == 0
-                ? means.Length
-                : numDotProductsIndexedBranches / numIndexedBranches);
-            return noChanges;
+           
+            return numChanges;
         }
 
         private int UpdateClustering(FlexibleVector[] data, int[] clustering,
@@ -1163,126 +1049,7 @@ namespace ESPkMeansLib
 
             return noChanges;
         }
-
-        /*
-        /// <summary>
-        /// exploit triangle inequality so that we do not need to calculate actual distance to every cluster centroid
-        /// </summary>
-        /// <param name="data"></param>
-        /// <param name="clustering"></param>
-        /// <param name="means"></param>
-        /// <param name="clustersChangedMapSrc"></param>
-        /// <param name="changes"></param>
-        /// <param name="clusterDistances"></param>
-        /// <returns></returns>
-        private int UpdateClusteringElkan(FlexibleVector[] data, int[] clustering,
-           FlexibleVector[] means, List<int> clustersChangedMapSrc,
-           (int clusterIdxFrom, int clusterIdxTo, int dataIdx)[] changes, float[][] clusterDistances)
-        {
-            if (UseSphericalKMeans)
-                throw new Exception("cosine distance does not meet triangle inequality");
-
-            if (means.Length <= 1)
-            {
-                return 0;
-            }
-
-            var noChanges = 0;
-
-            var completeMap = Enumerable.Range(0, means.Length).ToArray();
-            var clustersChangedMap = clustersChangedMapSrc.Count == 0 ? null : clustersChangedMapSrc.ToArray();
-
-            var watch = Stopwatch.StartNew();
-
-            for (int i = 0; i < means.Length; i++)
-            {
-                var arr = clusterDistances[i];
-                var cI = means[i];
-                for (int j = i + 1; j < means.Length; j++)
-                {
-                    if (clustersChangedMap != null &&
-                        clustersChangedMap.IndexOfValueInSortedArray(i) == -1 &&
-                        clustersChangedMap.IndexOfValueInSortedArray(j) == -1)
-                        continue; //both clusters have not changed, do not need to recalculate distance
-
-                    var d = (float)Math.Sqrt(cI.SquaredEuclideanDistanceWith(means[j]));
-                    arr[j] = d;
-                    clusterDistances[j][i] = d;
-                }
-            }
-
-            Trace.WriteLine($"calc. cluster distances in {watch.Elapsed}");
-
-            var partition = Partitioner.Create(0, data.Length);
-            Parallel.ForEach(partition, range =>
-            {
-                for (int i = range.Item1; i < range.Item2; ++i)
-                {
-                    var curRow = data[i];
-                    var prevClusterId = clustering[i];
-                    var newClusterId = prevClusterId;
-                    var prevMeansVec = means[prevClusterId];
-                    float minDistance = (float)Math.Sqrt(curRow.SquaredEuclideanDistanceWith(prevMeansVec));
-
-                    var map = completeMap;
-
-                    if (clustersChangedMap != null && clustersChangedMap.IndexOfValueInSortedArray(prevClusterId) == -1)
-                    {
-                        map = clustersChangedMap;
-                    }
-
-                    var curClusterDistances = clusterDistances[prevClusterId];
-
-                    foreach (var k in map)
-                    {
-                        if (k == prevClusterId)
-                            continue;
-
-                        var clusterDist = curClusterDistances[k];
-                        if (clusterDist >= 2 * minDistance)
-                        {
-                            //cluster k cannot be nearer, do not need to calculate distance
-                            continue;
-                        }
-
-                        var meansVec = means[k];
-                        var distance = (float)Math.Sqrt(curRow.SquaredEuclideanDistanceWith(meansVec));
-                        if (distance < minDistance)
-                        {
-                            minDistance = distance;
-                            newClusterId = k;
-                            curClusterDistances = clusterDistances[k];
-                        }
-                    }
-
-                    if (newClusterId != prevClusterId)
-                    {
-                        var curChangesCount = Interlocked.Increment(ref noChanges);
-                        if (changes != null && curChangesCount <= changes.Length)
-                        {
-                            //we just keep track of changes so that we can calculate means afterwards faster
-                            changes[curChangesCount - 1] = (prevClusterId, newClusterId, i);
-                        }
-                        clustering[i] = newClusterId;
-                    }
-                }
-
-
-                Thread.MemoryBarrier();
-            });
-
-            Thread.MemoryBarrier();
-
-            //Trace.WriteLine($"{noChanges} total changes, {hasClusterChanged.Count(b => b)} / {hasClusterChanged.Length} clusters changed");
-
-            return noChanges;
-        }
-        */
-
-
-
-
-
+        
 
     }
 }

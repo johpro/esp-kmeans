@@ -61,7 +61,7 @@ namespace ESPkMeansLib.Tests
         {
             const int numClusters = 100;
             var set = TestSet.LoadArxiv100K();
-            var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true, MinNumClustersForIndexedMeans = 100};
+            var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true};
             var (clustering, centroids) = kmeans.Cluster(set.Data!, numClusters, 5);
             var clusterCounts = KMeans.GetClusterCounts(clustering, numClusters);
 
@@ -81,7 +81,6 @@ namespace ESPkMeansLib.Tests
             const int numClusters = 500;
             var set = TestSet.LoadArxiv100K();
             var kmeans = new KMeans { UseSphericalKMeans = true, EnableLogging = true, EnableVerboseLogging = true};
-            kmeans.MinNumClustersForIndexedMeans = 30;
             var (clustering, centroids) = kmeans.Cluster(set.Data!, numClusters, 1);
 
         }
@@ -146,10 +145,10 @@ namespace ESPkMeansLib.Tests
             for (int i = 0; i < centroids.Length; i++)
             {
                 var c = centroids[i];
-                var neighbors = db.GetKNearestVectors(c, numNeighbors, dpTh);
-                neighborGraph[i] = neighbors;
+                var neighbors = db.GetKNearestVectors(c, numNeighbors);
+                neighborGraph[i] = neighbors.Select(n => n.id).ToArray();
                 Trace.WriteLine(descriptions[i]);
-                foreach (var id in neighbors)
+                foreach (var (id, dp) in neighbors)
                 {
                     if(id == i)
                         continue;

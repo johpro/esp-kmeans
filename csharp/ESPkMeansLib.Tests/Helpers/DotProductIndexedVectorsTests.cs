@@ -106,27 +106,13 @@ namespace ESPkMeansLib.Tests.Helpers
                         var tSet = indexVectors.Select((v, i) => (v, i))
                             .Where(p => p.v.DotProductWith(qV) >= threshold).Select(p => p.i).ToList();
 
-                        var retrieved = db.GetNearbyVectors(qV, threshold).ToList();
-                        var intersection = tSet.Intersect(retrieved);
+                        var retrieved = db.GetNearbyVectors(qV).Where(p => p.dotProduct >= threshold).ToList();
+                        var intersection = tSet.Intersect(retrieved.Select(p => p.id));
                         Assert.AreEqual(tSet.Count, intersection.Count());
                         Trace.WriteLine($"th {threshold}: {tSet.Count} above th, {retrieved.Count} retrieved");
                     }
                 }
                 db.Clear();
-            }
-
-            db = new DotProductIndexedVectors(new[] { 0f });
-            db.Set(indexVectors);
-            foreach (var qV in queryVectors)
-            {
-                var tSet = indexVectors.Select((v, i) => (v, i))
-                    .Where(p => p.v.DotProductWith(qV) > 0).Select(p => p.i).ToList();
-
-                var retrieved = db.GetNearbyVectors(qV).ToList();
-                var intersection = tSet.Intersect(retrieved);
-                Assert.AreEqual(tSet.Count, intersection.Count());
-                Trace.WriteLine($"th 0: {tSet.Count} above th, {retrieved.Count} retrieved");
-
             }
 
         }
@@ -160,7 +146,7 @@ namespace ESPkMeansLib.Tests.Helpers
                         {
                             if (v.Length == 0 || k == 0)
                             {
-                                Assert.AreEqual(0, db.GetKNearestVectors(v, k).Length);
+                                Assert.AreEqual(0, db.GetKNearestVectors(v, k).Count);
                                 continue;
                             }
 
@@ -172,10 +158,21 @@ namespace ESPkMeansLib.Tests.Helpers
                                 .Select(p => p.i)
                                 .ToArray();
 
-                            var res = db.GetKNearestVectors(v, k);
+
+                            var smDp = groundTruth.Min(p => indexVectors[p].DotProductWith(v));
+
+                            var groundTruthComplete = indexVectors
+                                .Select((v2, i) => (v2, i))
+                                .Where(p => v.DotProductWith(p.v2) >= smDp)
+                                .Select(p => p.i)
+                                .ToArray();
+
+
+
+                            var res = db.GetKNearestVectors(v, k).ToArray();
                             Trace.WriteLine($"k {k}: {res.Length} / {groundTruth.Length}");
                             Assert.AreEqual(groundTruth.Length, res.Length);
-                            Assert.AreEqual(res.Length, res.Intersect(groundTruth).Count());
+                            Assert.AreEqual(res.Length, res.Select(p => p.id).Intersect(groundTruthComplete).Count());
 
                             if (k != 1) continue;
 
@@ -184,8 +181,8 @@ namespace ESPkMeansLib.Tests.Helpers
                                 Assert.AreEqual(-1, k1res);
                             else
                             {
-                                Assert.AreEqual(res[0], k1res);
                                 Assert.AreEqual(v.DotProductWith(db.GetVectorById(k1res)), k1dp, 0.0001f);
+                                Assert.AreEqual(smDp, k1dp, 0.0001f);
                             }
                         }
                         Trace.WriteLine("");
@@ -212,33 +209,8 @@ namespace ESPkMeansLib.Tests.Helpers
             var watch = Stopwatch.StartNew();
             db = new DotProductIndexedVectors();
             db.Set(set);
-            Trace.WriteLine($"{watch.Elapsed} default thresholds"); watch.Restart();
-            db = new DotProductIndexedVectors(new[] { 0f });
-            db.Set(set);
-            Trace.WriteLine($"{watch.Elapsed} threshold 0"); watch.Restart();
-            db = new DotProductIndexedVectors(new[] { 0.01f });
-            db.Set(set);
-            Trace.WriteLine($"{watch.Elapsed} threshold 0.01"); watch.Restart();
+            Trace.WriteLine($"{watch.Elapsed} default"); watch.Restart();
         }
-
-        [TestMethod]
-        public unsafe void SquareTest()
-        {
-            var vecs = FlexibleVectorTests.CreateRandomVectors(100, false)
-                .Select(v => v.Values.ToArray()).ToArray();
-
-            foreach (var vec in vecs)
-            {
-                var res = new float[vec.Length];
-                fixed (float* v = vec, v2 = res)
-                    DotProductIndexedVectors.Square(res.Length, v, v2);
-                for (int i = 0; i < res.Length; i++)
-                {
-                    Assert.AreEqual(vec[i] * vec[i], res[i], 0.0001f);
-                }
-            }
-
-
-        }
+        
     }
 }

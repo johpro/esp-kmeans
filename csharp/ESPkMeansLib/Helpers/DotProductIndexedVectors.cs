@@ -19,193 +19,36 @@ using ESPkMeansLib.Model;
 namespace ESPkMeansLib.Helpers
 {
     /// <summary>
-    /// Indexing structure for unit-length vectors.
-    /// Given a minimum dot product of Lambda, retrieve all indexed unit-length vectors
-    /// that can have a dot product of at least Lambda with the query vector (of length smaller or equal 1).
-    /// The respective dot product of the returned vectors with the query may still be lower than the provided threshold,
-    /// but it is guaranteed that none of the remaining vectors in the index would match the query.
-    /// Several such Lambdas can be defined in the constructor to build a layered index.
-    /// Given a query vector and a lower bound of the dot product, the structure will then use the layer for retrieval
-    /// that has the highest threshold which is still equal to or below the lower bound, which makes retrieval operations
-    /// more efficient.
-    /// Please note that this indexing structure was designed for dot products in the range (0,1], which is typical for
+    /// Indexing structure to quickly retrieve indexed vectors in descending order of their dot product with query vector.
+    /// Please note that this indexing structure was designed for dot products greater than zero, which is typical for
     /// text representations that only have positive or zero vector entries, for instance.
-    /// That is, it is not possible to retrieve vectors based on a negative threshold (for instance, >= -0.1).
-    /// A threshold of zero thus implies an actual threshold of zero+epsilon.
+    /// That is, it is not possible to retrieve vectors hat have negative dot products.
     /// </summary>
     public class DotProductIndexedVectors
     {
 
-        public float MinDotProduct { get; }
         public int VectorsCount { get; private set; }
         public int MaxId { get; private set; }
 
-        public static readonly float[] DefaultThresholds = { 0.1f, 0.25f, 0.4f, 0.6f };
-
-        class DotProductThItem
-        {
-            /// <summary>
-            /// given a token, get list of affected vectors. For each vector id, we also store
-            /// how many tokens in source query need to share non-zero entry with vector such that
-            /// we get at least required dot product.
-            /// </summary>
-            public readonly DictList<int, (int id, int minNumOccurrences)> TokenToVectorsMap = new();
-
-
-            public float MinDotProduct;
-            public float MinDotProductSquared;
-            public float MaxSquaredSum;
-
-            public void Clear()
-            {
-                TokenToVectorsMap.Clear();
-            }
-
-            public void ToWriter(BinaryWriter writer)
-            {
-                writer.Write(1); //version
-                writer.Write(MinDotProduct);
-                writer.Write(MinDotProductSquared);
-                writer.Write(MaxSquaredSum);
-                writer.Write(TokenToVectorsMap.Count);
-                foreach (var key in TokenToVectorsMap.Keys)
-                {
-                    var l = TokenToVectorsMap[key];
-                    writer.Write(key);
-                    writer.Write(l.Count);
-                    for (int i = 0; i < l.Count; i++)
-                    {
-                        var (id, num) = l[i];
-                        writer.Write(id);
-                        writer.Write(num);
-                    }
-                }
-            }
-
-            public static DotProductThItem FromReader(BinaryReader reader)
-            {
-                var version = reader.ReadInt32();
-                var dp = reader.ReadSingle();
-                var dpSquared = reader.ReadSingle();
-                var maxSqSum = reader.ReadSingle();
-                
-                var res = new DotProductThItem
-                {
-                    MinDotProduct = dp,
-                    MinDotProductSquared = dpSquared,
-                    MaxSquaredSum = maxSqSum
-                };
-
-                var dictCount = reader.ReadInt32();
-                res.TokenToVectorsMap.EnsureDictCapacity(dictCount);
-                var list = new List<(int id, int minNumOccurrences)>();
-                for (int i = 0; i < dictCount; i++)
-                {
-                    var key = reader.ReadInt32();
-                    var listCount = reader.ReadInt32();
-                    list.Clear();
-                    list.EnsureCapacity(listCount);
-                    for (int j = 0; j < listCount; j++)
-                    {
-                        list.Add((reader.ReadInt32(), reader.ReadInt32()));
-                    }
-                    res.TokenToVectorsMap.AddRange(key, list);
-                }
-
-                return res;
-            }
-
-
-        }
-
-        private readonly bool _hasOnlyZeroThreshold;
-        private readonly DotProductThItem[] _map;
-        private readonly DictListInt<int> _globalMap = new();
+        private readonly DictList<int, (int id, float tokenVal)> _tokenToVectorsMap = new();
         private readonly Dictionary<int, FlexibleVector> _indexedVectors = new();
-
-        private readonly ConcurrentBag<HashSet<int>> _vectorHashSetBag = new();
-        private readonly ConcurrentBag<Dictionary<int, int>> _vectorDictionaryBag = new();
-        private readonly ConcurrentBag<List<int>> _intListBag = new();
-        private static readonly Dictionary<int, int> EmptyDict = new(0);
+        private readonly ConcurrentBag<Dictionary<int, float>> _intFloatDictionaryBag = new();
 
 
-
-        /// <summary>
-        /// Create indexing structure based on default thresholds (0.1, 0.25, 0.4f, and 0.6).
-        /// </summary>
-        public DotProductIndexedVectors() : this(DefaultThresholds)
+        public DotProductIndexedVectors()
         {
+
         }
 
-        /// <summary>
-        /// Create indexing structure.
-        /// </summary>
-        /// <param name="minDotProductValues">One or several dot product thresholds (>= 0) that should be used for indexing the vectors</param>
-        public DotProductIndexedVectors(float[] minDotProductValues)
+        private DotProductIndexedVectors(StorageMeta meta, Dictionary<int, FlexibleVector> indexedVectors,
+            DictList<int, (int id, float tokenVal)> globalMap)
         {
-            /*
-             *  Lemma 1: given a vector v with at most unit-length, then
-                    the vector v/|v| maximizes the dot product with v among all
-                    possible unit-length vectors
-
-                    Proof: v dot x = |v| |x| cos(theta) -> |x| is 1, hence all vectors that have
-                        angle 0 (cos(0) = 1) maximize dot product
-                        -> all scaled versions of v, can only be v/|v| since 1/|v| is only scalar
-                        that leads to unit-length vector
-
-                Lemma 2: any vector v can only then (if at all) lead to a dot product >= minDotProduct
-                    with a query vector of unit length x,
-                    if its length is >= minDotProduct (=> squared sum >= minDotProduct ^2)
-                    
-                    Proof: v dot x = |v| |x| cos(theta) -> |x| is 1, cos(theta) <= 1 -> v dot x <= |v|
-
-                from Lemma 2 follows that if a subset of entries of a unit-length vector v
-                    already has squared sum > 1- minDotProduct^2,
-                    then a query vector containing only the remaining entries of v (or a subset)
-                    can never lead to a dot product >= minDotProduct
-
-                Lemma 3: given value > 0 && < minDotProduct, then we would need at least minDotProduct^2/value^2
-                        of tokens with <= value so that we can reach minDotProduct
-             */
-            var minDotProductValues1 = minDotProductValues.ToArray();
-            if (minDotProductValues1.Length == 1 && minDotProductValues1[0] <= float.Epsilon)
-            {
-                _hasOnlyZeroThreshold = true;
-            }
-
-            Array.Sort(minDotProductValues1);
-            MinDotProduct = minDotProductValues1[0];
-
-            _map = new DotProductThItem[minDotProductValues1.Length];
-            for (int i = 0; i < _map.Length; i++)
-            {
-                var minDotProduct = minDotProductValues1[i];
-                if (minDotProduct < 0)
-                    throw new ArgumentException("indexing structure does not support negative dot product threshold");
-                _map[i] = new DotProductThItem
-                {
-                    MinDotProduct = minDotProduct,
-                    MinDotProductSquared = minDotProduct * minDotProduct,
-                    MaxSquaredSum = 1 - minDotProduct * minDotProduct
-                };
-            }
-        }
-
-        private DotProductIndexedVectors(StorageMeta meta, DotProductThItem[] maps,
-            Dictionary<int, FlexibleVector> indexedVectors, DictListInt<int> globalMap)
-        {
-            MinDotProduct = meta.MinDotProduct;
-            MaxId = meta.MaxId;
-            VectorsCount = meta.VectorsCount;
-            _map = maps;
+            _tokenToVectorsMap = globalMap;
             _indexedVectors = indexedVectors;
-            _globalMap = globalMap;
-            if (maps.Length == 1 && maps[0].MinDotProduct <= float.Epsilon)
-            {
-                _hasOnlyZeroThreshold = true;
-            }
+            VectorsCount = meta.VectorsCount;
+            MaxId = meta.MaxId;
         }
-        
+
 
         /// <summary>
         /// Clear the index
@@ -213,11 +56,7 @@ namespace ESPkMeansLib.Helpers
         public void Clear()
         {
             _indexedVectors.Clear();
-            foreach (var dict in _map)
-            {
-                dict.Clear();
-            }
-            _globalMap.Clear();
+            _tokenToVectorsMap.Clear();
             VectorsCount = 0;
             MaxId = 0;
         }
@@ -232,8 +71,6 @@ namespace ESPkMeansLib.Helpers
         {
             if (vectors.Length == 0)
                 return;
-            if(_globalMap.AvailableCount == 0)
-                PrepareGlobalMapCapacity(vectors);
             Clear();
             _indexedVectors.EnsureCapacity(vectors.Length);
             for (var i = 0; i < vectors.Length; i++)
@@ -243,184 +80,31 @@ namespace ESPkMeansLib.Helpers
         }
 
         /// <summary>
-        /// Pass through all vectors to count distribution of indexes so that we can initialize the capacity of the global map
-        /// </summary>
-        /// <param name="vectors"></param>
-        private void PrepareGlobalMapCapacity(FlexibleVector[] vectors)
-        {
-            var countDict = new Dictionary<int, int>(vectors.Max(v => v.Length));
-            foreach (var v in vectors)
-            {
-                var indexes = v.Indexes;
-                for (int i = 0; i < indexes.Length; i++)
-                {
-                    countDict.IncrementItem(indexes[i]);
-                }
-            }
-            _globalMap.EnsureDictCapacity(countDict.Count);
-            foreach (var p in countDict)
-            {
-                if(p.Value <= 1)
-                    continue;
-                _globalMap.EnsureListCapacity(p.Key, p.Value);
-            }
-        }
-
-        /// <summary>
-        /// Add provided unit-length vector to the index. A unique identifier has to be provided as well, which will be returned on querying the index.
+        /// Add specified vector to the index. A unique identifier has to be provided as well, which will be returned on querying the index.
         /// </summary>
         /// <param name="v">Vector to add</param>
         /// <param name="id">Unique number to identify vector</param>
-        /// <exception cref="ArgumentException"></exception>
+        /// <exception cref="ArgumentException">will be thrown if number of vector entries is zero</exception>
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        public unsafe void Add(FlexibleVector v, int id)
+        public void Add(FlexibleVector v, int id)
         {
-            if (v.Length < 1)
-                throw new ArgumentException("cannot add zero vector to index");
             if (!v.IsSparse)
                 v = v.ToSparse();
-            if (!v.IsUnitVector)
-                throw new ArgumentException("vector has to have length 1");
+            if (v.Length < 1)
+                throw new ArgumentException("cannot add zero vector to index");
             VectorsCount++;
             MaxId = Math.Max(MaxId, id);
             _indexedVectors.Add(id, v);
 
-            //in every case we need to populate global map
+            var indexes = v.Indexes;
+            var values = v.Values;
 
-            if (_hasOnlyZeroThreshold)
+            for (int i = 0; i < indexes.Length; i++)
             {
-                //we just need global map
-                AddToGlobalMap(v.Indexes, id);
-                return;
-            }
-
-
-            //sorting and squaring makes up around 20% of the indexing time
-            var numZero = 0;
-            var len = SortValues(v, out var indexes, out var values);
-            var valuesSquared = ArrayPool<float>.Shared.Rent(len);
-            fixed (float* valuesSquaredPtr = valuesSquared, valuesPtr = values)
-            {
-                Square(len, valuesPtr, valuesSquaredPtr);
-
-                for (; numZero < len; numZero++)
-                {
-                    if (valuesPtr[numZero] > float.MinValue)
-                        break;
-                }
-            }
-
-            len -= numZero;
-            var indexesSpan = indexes.AsSpan(numZero, len);
-            AddToGlobalMap(indexesSpan, id);
-            AddWithCountStrategy(indexesSpan,
-                values.AsSpan(numZero, len), valuesSquared.AsSpan(numZero, len), id);
-            ArrayPool<int>.Shared.Return(indexes);
-            ArrayPool<float>.Shared.Return(values);
-            ArrayPool<float>.Shared.Return(valuesSquared);
-        }
-
-
-        [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private void AddToGlobalMap(ReadOnlySpan<int> indexes, int id)
-        {
-            for (var i = 0; i < indexes.Length; i++)
-            {
-                var idx = indexes[i];
-                _globalMap.AddToList(idx, id);
+                _tokenToVectorsMap.AddToList(indexes[i], (id, values[i]));
             }
         }
 
-
-        [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private static int SortValues(FlexibleVector vec, out int[] indexes, out float[] values)
-        {
-            var len = vec.Length;
-            indexes = ArrayPool<int>.Shared.Rent(len);
-            //vec.Indexes.CopyTo(indexes);
-            values = ArrayPool<float>.Shared.Rent(len);
-            //vec.Values.CopyTo(values);
-            vec.CopyTo(indexes, values);
-            //we are only interested in absolute values
-            for (int i = 0; i < len; i++)
-            {
-                var val = values[i];
-                if (val < 0)
-                    values[i] = Math.Abs(val);
-            }
-            Array.Sort(values, indexes, 0, len);
-            return len;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private unsafe void AddWithCountStrategy(Span<int> indexes, Span<float> values, Span<float> valuesSquared, int id)
-        {
-            //pointer-based access leads to slight gains in performance of a about 10-15%
-            //map.TokenToVectorsMap.AddToList takes most of the time
-            fixed (int* indexesPtr = indexes)
-            {
-                fixed (float* valuesPtr = values, valuesSquaredPtr = valuesSquared)
-                {
-                    foreach (var map in _map)
-                    {
-                        var currentEndIdxOfSumSpan = values.Length - 1;
-                        var squaredSumOfSumSpan = 0f;
-
-                        var minDotProduct = map.MinDotProduct;
-                        var requiredSquaredSum = map.MinDotProductSquared - 0.001f;
-
-                        var minNumTokens = 1;
-
-                        for (int i = values.Length - 1; i >= 0; i--)
-                        {
-                            var val = valuesPtr[i];
-                            var idx = indexesPtr[i];
-                            if (val >= minDotProduct)
-                            {
-                                //if only this token is present in query it could already be enough to get
-                                //required dot product
-                                map.TokenToVectorsMap.AddToList(idx, (id, 1));
-                                currentEndIdxOfSumSpan = i - 1;
-                                continue;
-                            }
-
-                            //now determine min num of tokens with a non-zero entry in this vector
-                            //to retrieve required min dot product, given that none of the previous (higher-valued)
-                            //tokens were present -> minNumTokens increases monotonically
-
-                            //-> we can do this similar to a "sliding window" approach so that we avoid squared time complexity
-                            if (squaredSumOfSumSpan > 0)
-                            {
-                                squaredSumOfSumSpan -= valuesSquaredPtr[i + 1];
-                            }
-
-                            var isDone = false;
-                            squaredSumOfSumSpan += valuesSquaredPtr[currentEndIdxOfSumSpan];
-                            currentEndIdxOfSumSpan--;
-                            while (squaredSumOfSumSpan < requiredSquaredSum)
-                            {
-                                if (currentEndIdxOfSumSpan < 0)
-                                {
-                                    //we cannot achieve required sum anymore with this or next tokens
-                                    isDone = true;
-                                    break;
-                                }
-                                squaredSumOfSumSpan += valuesSquaredPtr[currentEndIdxOfSumSpan];
-                                currentEndIdxOfSumSpan--;
-                                minNumTokens++;
-                            }
-
-                            if (isDone)
-                                break;
-
-                            map.TokenToVectorsMap.AddToList(idx, (id, minNumTokens));
-                        }
-                    }
-                }
-            }
-
-
-        }
 
         /// <summary>
         /// Retrieve corresponding vector from index
@@ -431,455 +115,268 @@ namespace ESPkMeansLib.Helpers
         {
             return _indexedVectors[id];
         }
-
         /// <summary>
         /// Get the id and the corresponding dot product of the nearest vector.
-        /// Returns id of -1 if no match has been found.
-        /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
-        /// A threshold > 0 (<paramref name="minDotProduct"/>) can be defined
-        /// to ignore neighbors that are too far away.
+        /// Returns id of -1 if no match has been found (with dot product > 0).
+        /// Neighbor must have dot product > 0 due to the inner workings of this indexing structure.
         /// </summary>
         /// <param name="vector"></param>
-        /// <param name="minDotProduct"></param>
         /// <returns></returns>
-        /// <exception cref="ArgumentException"></exception>
+        public (int id, float dotProduct) GetNearestVector(FlexibleVector vector)
+        {
+            return GetNearestVector(vector, out _);
+        }
+
+
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        public (int id, float dotProduct) GetNearestVector(FlexibleVector vector, float minDotProduct = 0)
-        {
-            if (minDotProduct < 0)
-                throw new ArgumentException("indexing structure does not support negative dot product threshold");
-            if(vector.Length == 0)
-                return (-1, default);
-            var countDict = EmptyDict;
-            try
-            {
-                //count occurrences with global map first so that we do not need to repeat this for every threshold
-                int offset = 0;
-                if (!_hasOnlyZeroThreshold)
-                    countDict = CountAffectedClusters(vector.Indexes, out offset);
-                var lowerLimit = _map[0].MinDotProduct <= float.Epsilon ? 0 : -1;
-                for (int i = _map.Length - 1; i >= lowerLimit; i--)
-                {
-                    var th = i < 0 ? 0 : _map[i].MinDotProduct;
-                    var isLastBody = i == lowerLimit || th <= minDotProduct;
-
-                    var bestDp = float.MinValue;
-                    var bestId = -1;
-                    var clusters = th <= float.Epsilon
-                        ? GetNearbyVectorsExhaustiveStrategy(vector)
-                        : GetNearbyVectorsCountStrategy(_map[i], vector, countDict, offset);
-                    foreach (var id in clusters)
-                    {
-                        var dp = _indexedVectors[id].DotProductWith(vector);
-                        if (dp <= bestDp)
-                            continue;
-                        bestDp = dp;
-                        bestId = id;
-                    }
-
-                    if (bestDp < th)
-                    {
-                        if (isLastBody)
-                            return (-1, default);
-                        continue;
-                    }
-
-                    return (bestId, bestDp);
-                }
-
-                return (-1, default);
-            }
-            finally
-            {
-                if (countDict != EmptyDict)
-                    _vectorDictionaryBag.Add(countDict);
-            }
-
-
-        }
-
-
-        /// <summary>
-        /// Retrieve k nearest neighbors from index (can be fewer than k), sorted in descending order of similarity.
-        /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
-        /// A threshold > 0 (<paramref name="minDotProduct"/>) can be defined
-        /// to ignore neighbors that are too far away.
-        /// </summary>
-        /// <param name="vector">The vector whose neighbors should be retrieved</param>
-        /// <param name="k">The number of neighbors to retrieve</param>
-        /// <param name="minDotProduct">Threshold to ignore distant vectors (actual dot product may still be lower)</param>
-        /// <returns>Corresponding identifiers of the k (or fewer) nearest neighbors.</returns>
-        /// <exception cref="ArgumentException"></exception>
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        public int[] GetKNearestVectors(FlexibleVector vector, int k, float minDotProduct = 0)
-        {
-            if (minDotProduct < 0)
-                throw new ArgumentException("indexing structure does not support negative dot product threshold");
-            if (k <= 0 || vector.Length == 0)
-                return Array.Empty<int>();
-
-            if (_intListBag.TryTake(out var vecList))
-                vecList.Clear();
-            else
-                vecList = new List<int>(k);
-            var countDict = EmptyDict;
-            //count occurrences with global map first so that we do not need to repeat this for every threshold
-            int offset = 0;
-            if (!_hasOnlyZeroThreshold)
-                countDict = CountAffectedClusters(vector.Indexes, out offset);
-            try
-            {
-                var lowerLimit = _map[0].MinDotProduct <= float.Epsilon ? 0 : -1;
-                for (int i = _map.Length - 1; i >= lowerLimit; i--)
-                {
-                    var th = i < 0 ? 0 : _map[i].MinDotProduct;
-                    var isLastBody = i == lowerLimit || th <= minDotProduct;
-                    vecList.Clear();
-                    var clusters = th <= float.Epsilon
-                        ? GetNearbyVectorsExhaustiveStrategy(vector)
-                        : GetNearbyVectorsCountStrategy(_map[i], vector, countDict, offset);
-                    foreach (var id in clusters)
-                    {
-                        vecList.Add(id);
-                    }
-                    if (!isLastBody && vecList.Count < k)
-                        continue;
-                    if (vecList.Count == 0)
-                        return Array.Empty<int>();
-                    var cosDistanceList = ArrayPool<float>.Shared.Rent(vecList.Count);
-                    var numAboveTh = 0;
-                    if (vector.Length * vecList.Count > 10_000)
-                    {
-                        Parallel.For(0, vecList.Count, j =>
-                        {
-                            var dp = vector.DotProductWith(_indexedVectors[vecList[j]]);
-                            cosDistanceList[j] = 1 - dp;
-                            if (dp >= th)
-                                Interlocked.Increment(ref numAboveTh);
-                        });
-                    }
-                    else
-                    {
-                        for (int j = 0; j < vecList.Count; j++)
-                        {
-                            var dp = vector.DotProductWith(_indexedVectors[vecList[j]]);
-                            cosDistanceList[j] = 1 - dp;
-                            if (dp >= th)
-                                numAboveTh++;
-                        }
-                    }
-                    
-
-                    if (!isLastBody && numAboveTh < k)
-                    {
-                        //cannot guarantee that entries below th belong to the nearest neighbors
-                        ArrayPool<float>.Shared.Return(cosDistanceList);
-                        continue;
-                    }
-
-                    var numRes = Math.Min(k, numAboveTh);
-                    var res = new int[numRes];
-
-                    if (numRes == 1)
-                    {
-                        //do not need to sort results, we can take best item
-                        var bestDistance = float.MaxValue;
-                        for (int j = 0; j < vecList.Count; j++)
-                        {
-                            var distance = cosDistanceList[j];
-                            if (distance >= bestDistance)
-                                continue;
-                            bestDistance = distance;
-                            res[0] = vecList[j];
-                        }
-                    }
-                    else if (numRes > 1)
-                    {
-                        var idList = ArrayPool<int>.Shared.Rent(vecList.Count);
-                        vecList.CopyTo(idList);
-                        Array.Sort(cosDistanceList, idList, 0, vecList.Count);
-                        Array.Copy(idList, res, res.Length);
-                        ArrayPool<int>.Shared.Return(idList);
-                    }
-
-
-                    ArrayPool<float>.Shared.Return(cosDistanceList);
-                    return res;
-                }
-
-                return Array.Empty<int>();
-            }
-            finally
-            {
-                _intListBag.Add(vecList);
-                if (countDict != EmptyDict)
-                    _vectorDictionaryBag.Add(countDict);
-            }
-        }
-
-
-
-        /// <summary>
-        /// Retrieve all indexed vector ids that can lead to a dot product >= MinDotProduct with the query <paramref name="vector"/>.
-        /// Only valid if the provided <paramref name="vector"/> has length equal to or smaller than 1.
-        /// Actual dot product can also be smaller.
-        /// </summary>
-        /// <param name="vector">The query vector</param>
-        /// <returns>Enumeration of found vector IDs</returns>
-        public IEnumerable<int> GetNearbyVectors(FlexibleVector vector)
-        {
-            return GetNearbyVectors(vector, MinDotProduct);
-        }
-
-
-        /// <summary>
-        /// Retrieve all indexed vector ids that can lead to a dot product >= <param name="minDotProduct"></param> with the query <paramref name="vector"/>.
-        /// Only valid if provided <paramref name="vector"/> has length equal to or smaller than 1.
-        /// Actual dot product can also be smaller.
-        /// </summary>
-        /// <param name="vector">the query vector</param>
-        /// <param name="minDotProduct">the lower bound of the dot product, has to be greater or equal 0</param>
-        /// <returns>Enumeration of found vector IDs</returns>
-        [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        public IEnumerable<int> GetNearbyVectors(FlexibleVector vector, float minDotProduct)
+        internal (int id, float dotProduct) GetNearestVector(FlexibleVector vector, out int affectedClustersCount)
         {
             if (!vector.IsSparse)
                 vector = vector.ToSparse();
-
-            if (minDotProduct < 0)
-                throw new ArgumentException("indexing structure does not support negative dot product threshold");
-
-            if (vector.Length == 0)
-                return Enumerable.Empty<int>();
-
-            if (minDotProduct <= float.Epsilon ||
-                minDotProduct < _map[0].MinDotProduct ||
-                _hasOnlyZeroThreshold)
-            {
-                return vector.Indexes.Length == 1
-                    ? GetNearbyVectorsSingleTokenExhaustiveStrategy(vector.Indexes[0])
-                    : GetNearbyVectorsExhaustiveStrategy(vector);
-            }
-
-            for (int i = _map.Length - 1; i >= 0; i--)
-            {
-                var map = _map[i];
-                if (map.MinDotProduct <= minDotProduct)
-                {
-                    return vector.Indexes.Length == 1
-                        ? GetNearbyVectorsSingleTokenStrategy(map, vector.Indexes[0])
-                        : GetNearbyVectorsCountStrategy(map, vector);
-                }
-            }
-
-            throw new Exception("code path should not be reached");
-        }
-        
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private IEnumerable<int> GetNearbyVectorsCountStrategy(DotProductThItem map, FlexibleVector vector,
-            Dictionary<int, int>? cachedCountDict = null, int cachedOffset = 0)
-        {
-            if (_vectorHashSetBag.TryTake(out var hashSet))
-                hashSet.Clear();
-            else
-                hashSet = new HashSet<int>();
-
-            var vecLen = vector.Length;
             var indexes = vector.Indexes;
-            var countDict = cachedCountDict ?? EmptyDict;
-            var offset = cachedOffset;
-            
-            if (cachedCountDict == null)
-                countDict = CountAffectedClusters(indexes, out offset);
-
-            for (int j = 0; j < indexes.Length; j++)
-            {
-                var idx = indexes[j];
-                if (map.TokenToVectorsMap.TryGetValue(idx, out var vecList))
-                {
-                    for (int i = 0; i < vecList.Count; i++)
-                    {
-                        var (id, minNumOccurrences) = vecList[i];
-                        if (minNumOccurrences == 1 || minNumOccurrences <= vecLen && countDict.GetValueOrDefault(id) >= minNumOccurrences - offset)
-                        {
-                            hashSet.Add(id);
-                        }
-                    }
-                    if (hashSet.Count == VectorsCount)
-                        break; //already all means returned
-                }
-            }
-
-            foreach (var k in hashSet)
-            {
-                yield return k;
-            }
-
-            if (cachedCountDict == null && countDict != EmptyDict)
-            {
-                _vectorDictionaryBag.Add(countDict);
-            }
-            _vectorHashSetBag.Add(hashSet);
-        }
-
-        
-
-
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private Dictionary<int, int> CountAffectedClusters(ReadOnlySpan<int> indexes, out int offset)
-        {
-            offset = 0;
-            if (_vectorDictionaryBag.TryTake(out var countDict))
-                countDict.Clear();
+            var values = vector.Values;
+            if (_intFloatDictionaryBag.TryTake(out var dict))
+                dict.Clear();
             else
-                countDict = new();
-            var countTh = Math.Max(3, _indexedVectors.Count / 4);
-            for (int j = 0; j < indexes.Length; j++)
+                dict = new Dictionary<int, float>();
+            for (int i = 0; i < indexes.Length; i++)
             {
-                var idx = indexes[j];
-                if (_globalMap.TryGetValue(idx, out var l))
-                {
-                    if (l.Count >= countTh)
-                    {
-                        //avoid going through long lists, we just set down the threshold for retrieval
-                        offset++;
-                        continue;
-                    }
-
-                    for (int i = 0; i < l.Count; i++)
-                    {
-                        countDict.IncrementItem(l[i]);
-                    }
-                }
-            }
-
-            return countDict;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private IEnumerable<int> GetNearbyVectorsSingleTokenStrategy(DotProductThItem map, int token)
-        {
-            if (!map.TokenToVectorsMap.TryGetValue(token, out var l))
-                yield break;
-
-            for (int i = 0; i < l.Count; i++)
-            {
-                var (id, minNumOccurrences) = l[i];
-                if (minNumOccurrences > 1)
+                if (!_tokenToVectorsMap.TryGetValue(indexes[i], out var list))
                     continue;
-                yield return id;
-            }
-
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private IEnumerable<int> GetNearbyVectorsExhaustiveStrategy(FlexibleVector vector)
-        {
-            if (_vectorHashSetBag.TryTake(out var hashSet))
-                hashSet.Clear();
-            else
-                hashSet = new HashSet<int>();
-
-            for (int j = 0; j < vector.Indexes.Length; j++)
-            {
-                var idx = vector.Indexes[j];
-                if (!_globalMap.TryGetValue(idx, out var list)) continue;
-
-                for (int i = 0; i < list.Count; i++)
+                var val = values[i];
+                for (int j = 0; j < list.Count; j++)
                 {
-                    var k = list[i];
-                    hashSet.Add(k);
+                    var (id, tokenVal) = list[j];
+                    dict.AddToItem(id, tokenVal * val);
                 }
-                if (hashSet.Count == VectorsCount)
-                    break; //already all means returned
             }
 
-            foreach (var k in hashSet)
+            affectedClustersCount = dict.Count;
+
+            if (dict.Count == 0)
             {
-                yield return k;
+                _intFloatDictionaryBag.Add(dict);
+                return (-1, default);
             }
 
-            _vectorHashSetBag.Add(hashSet);
-        }
+            int bestId = -1;
+            float bestDp = float.MinValue;
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private IEnumerable<int> GetNearbyVectorsSingleTokenExhaustiveStrategy(int token)
-        {
-            if (!_globalMap.TryGetValue(token, out var list)) yield break;
 
-            for (int i = 0; i < list.Count; i++)
+            foreach (var p in dict)
             {
-                yield return list[i];
+                if (p.Value > bestDp)
+                {
+                    bestId = p.Key;
+                    bestDp = p.Value;
+                }
             }
+            _intFloatDictionaryBag.Add(dict);
+            if (bestDp <= 0)
+                return (-1, default);
+            return (bestId, bestDp);
         }
-
 
         /// <summary>
-        /// Square n values in a and store result in y
+        /// Get nearest vector given that we indexed an array of vectors, so that we can use
+        /// an array instead of a dictionary for accumulating the dot products.
         /// </summary>
-        /// <param name="n"></param>
-        /// <param name="a"></param>
-        /// <param name="y"></param>
+        /// <param name="vector"></param>
+        /// <returns></returns>
         /// <exception cref="Exception"></exception>
-        [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        public static unsafe void Square(int n, float* a, float* y)
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        internal unsafe (int id, float dotProduct) GetNearestVectorArrayDict(FlexibleVector vector)
         {
-            var len = n;
-            const int vecSize = 8;
-            const int blockSize = 4 * vecSize;
-            var aPtr = a;
-            var yPtr = y;
-            if (Avx.IsSupported)
+            if (!vector.IsSparse)
+                throw new Exception("vector has to be sparse");
+            var indexes = vector.Indexes;
+            var values = vector.Values;
+            var dict = ArrayPool<float>.Shared.Rent(MaxId + 1);
+            Array.Clear(dict, 0, MaxId + 1);
+            try
             {
-                if (Vector256<float>.Count != vecSize)
-                    throw new Exception("Vector256<float>.Count mismatch");
-                while (len >= blockSize)
+                fixed (float* dictPtr = dict)
                 {
-                    var a0 = Avx.LoadVector256(aPtr + 0 * vecSize);
-                    var a1 = Avx.LoadVector256(aPtr + 1 * vecSize);
-                    var a2 = Avx.LoadVector256(aPtr + 2 * vecSize);
-                    var a3 = Avx.LoadVector256(aPtr + 3 * vecSize);
-                    Avx.Store(yPtr + 0 * vecSize, Avx.Multiply(a0, a0));
-                    Avx.Store(yPtr + 1 * vecSize, Avx.Multiply(a1, a1));
-                    Avx.Store(yPtr + 2 * vecSize, Avx.Multiply(a2, a2));
-                    Avx.Store(yPtr + 3 * vecSize, Avx.Multiply(a3, a3));
-                    yPtr += blockSize;
-                    aPtr += blockSize;
-                    len -= blockSize;
+                    for (int i = 0; i < indexes.Length; i++)
+                    {
+                        if (!_tokenToVectorsMap.TryGetValue(indexes[i], out var list))
+                            continue;
+                        var val = values[i];
+                        for (int j = 0; j < list.Count; j++)
+                        {
+                            var (id, tokenVal) = list[j];
+                            dictPtr[id] += tokenVal * val;
+                        }
+                    }
+
+                    int bestId = -1;
+                    float bestDp = float.MinValue;
+                    
+                    for (int i = 0; i <= MaxId; i++)
+                    {
+                        var dp = dictPtr[i];
+                        if (dp <= 0)
+                            continue;
+                        if (dp > bestDp)
+                        {
+                            bestDp = dp;
+                            bestId = i;
+                        }
+                    }
+                    if (bestId == -1)
+                    {
+                        return (-1, default);
+                    }
+
+                    if (bestDp <= 0)
+                        return (-1, default);
+                    return (bestId, bestDp);
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(dict);
+            }
+        }
+        
+        /// <summary>
+        /// Retrieve k nearest neighbors from index (can be fewer than k), sorted in descending order of similarity.
+        /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
+        /// </summary>
+        /// <param name="vector">The vector whose neighbors should be retrieved</param>
+        /// <param name="k">The number of neighbors to retrieve</param>
+        /// <returns>Corresponding identifiers of the k (or fewer) nearest neighbors.</returns>
+        public List<(int id, float dotProduct)> GetKNearestVectors(FlexibleVector vector, int k)
+        {
+            if (!vector.IsSparse)
+                vector = vector.ToSparse();
+            var indexes = vector.Indexes;
+            var values = vector.Values;
+            if (_intFloatDictionaryBag.TryTake(out var dict))
+                dict.Clear();
+            else
+                dict = new Dictionary<int, float>();
+            try
+            {
+                for (int i = 0; i < indexes.Length; i++)
+                {
+                    if (!_tokenToVectorsMap.TryGetValue(indexes[i], out var list))
+                        continue;
+                    var val = values[i];
+                    for (int j = 0; j < list.Count; j++)
+                    {
+                        var (id, tokenVal) = list[j];
+                        dict.AddToItem(id, tokenVal * val);
+                    }
                 }
 
-                while (len >= vecSize)
+                var len = Math.Min(dict.Count, k);
+
+                var resList = new List<(int id, float dotProduct)>(len + 1);
+                if (len == 0)
+                    return resList;
+
+                using (var e = dict.GetEnumerator())
                 {
-                    var a0 = Avx.LoadVector256(aPtr);
-                    Avx.Store(yPtr, Avx.Multiply(a0, a0));
-                    yPtr += vecSize;
-                    aPtr += vecSize;
-                    len -= vecSize;
+                    for (int i = 0; i < len;)
+                    {
+                        if (e.MoveNext())
+                        {
+                            if (e.Current.Value > 0)
+                            {
+                                resList.Add((e.Current.Key, e.Current.Value));
+                                i++;
+                            }
+                        }
+                        else
+                            break;
+                    }
+                    if(resList.Count > 1)
+                        resList.Sort(DpResultComparator.Default);
+                    if (dict.Count <= len)
+                        return resList;
+                    while (e.MoveNext())
+                    {
+                        var curVal = e.Current.Value;
+                        if(curVal <= 0)
+                            continue;
+                        int index = resList.BinarySearch((default, curVal), DpResultComparator.Default);
+                        if (index < 0) index = ~index;
+                        if (index < resList.Count)                    // if (index != 0)
+                        {
+                            resList.Insert(index, (e.Current.Key, curVal));
+                            resList.RemoveAt(len);              // top.RemoveAt(0)
+                        }
+                    }
+                }
+                return resList;
+            }
+            finally
+            {
+
+                _intFloatDictionaryBag.Add(dict);
+            }
+        }
+
+        /// <summary>
+        /// Get nearby vectors (i.e., those that have dot product > 0) and their dot product with the query vector.
+        /// The order of the items in the returned list is arbitrary.
+        /// </summary>
+        /// <param name="vector"></param>
+        /// <returns></returns>
+        public List<(int id, float dotProduct)> GetNearbyVectors(FlexibleVector vector)
+        {
+            if (!vector.IsSparse)
+                vector = vector.ToSparse();
+            var indexes = vector.Indexes;
+            var values = vector.Values;
+            if (_intFloatDictionaryBag.TryTake(out var dict))
+                dict.Clear();
+            else
+                dict = new Dictionary<int, float>();
+            for (int i = 0; i < indexes.Length; i++)
+            {
+                if (!_tokenToVectorsMap.TryGetValue(indexes[i], out var list))
+                    continue;
+                var val = values[i];
+                for (int j = 0; j < list.Count; j++)
+                {
+                    var (id, tokenVal) = list[j];
+                    dict.AddToItem(id, tokenVal * val);
                 }
             }
 
-            while (len > 0)
+            var resList = new List<(int id, float dotProduct)>(dict.Count);
+            foreach (var p in dict)
             {
-                *yPtr = *aPtr * *aPtr;
-                yPtr++;
-                aPtr++;
-                len--;
+                if(p.Value > 0)
+                    resList.Add((p.Key, p.Value));
+            }
+            _intFloatDictionaryBag.Add(dict);
+            return resList;
+
+
+        }
+
+        private class DpResultComparator : IComparer<(int id, float dotProduct)>
+        {
+            public static readonly DpResultComparator Default = new DpResultComparator();
+            public int Compare((int id, float dotProduct) x, (int id, float dotProduct) y)
+            {
+                return Comparer<float>.Default.Compare(y.Item2, x.Item2);
             }
         }
 
 
+        private const string StorageMetaId = "sdpindex-meta.json";
+        private const string StorageBlobId = "sdpindex.bin";
+        private const string StoragePrefix = "sdpindex-";
+        private const int StorageBlobSignature = 4149865;
 
-
-        private const string StorageMetaId = "dpindex-meta.json";
-        private const string StorageBlobId = "dpindex.bin";
-        private const string StoragePrefix = "dpindex-";
-        private const int StorageBlobSignature = 872149865;
 
         private class StorageMeta
         {
             public int Version { get; set; } = 1;
-
-            public float MinDotProduct { get; set; }
             public int VectorsCount { get; set; }
             public int MaxId { get; set; }
         }
@@ -905,14 +402,13 @@ namespace ESPkMeansLib.Helpers
         {
             var meta = new StorageMeta
             {
-                MinDotProduct = MinDotProduct,
                 MaxId = MaxId,
                 VectorsCount = VectorsCount,
                 Version = 1
             };
 
             var metaStr = JsonSerializer.Serialize(meta);
-            if(zip.Mode == ZipArchiveMode.Update)
+            if (zip.Mode == ZipArchiveMode.Update)
                 zip.GetEntry(StorageMetaId)?.Delete();
             var entry = zip.CreateEntry(StorageMetaId);
             using (var entryStream = new StreamWriter(entry.Open()))
@@ -924,26 +420,22 @@ namespace ESPkMeansLib.Helpers
             using (var w = new BinaryWriter(new BufferedStream(entry.Open())))
             {
                 w.Write(StorageBlobSignature);
-                w.Write(_map.Length);
-                foreach (var m in _map)
-                {
-                    m.ToWriter(w);
-                }
                 w.Write(_indexedVectors.Count);
                 foreach (var v in _indexedVectors)
                 {
                     w.Write(v.Key);
                     v.Value.ToWriter(w);
                 }
-                w.Write(_globalMap.Count);
-                foreach (var key in _globalMap.Keys)
+                w.Write(_tokenToVectorsMap.Count);
+                foreach (var key in _tokenToVectorsMap.Keys)
                 {
                     w.Write(key);
-                    var l = _globalMap[key];
+                    var l = _tokenToVectorsMap[key];
                     w.Write(l.Count);
                     for (int i = 0; i < l.Count; i++)
                     {
-                        w.Write(l[i]);
+                        w.Write(l[i].id);
+                        w.Write(l[i].tokenVal);
                     }
                 }
             }
@@ -965,7 +457,7 @@ namespace ESPkMeansLib.Helpers
 
             StorageMeta meta;
             using (var reader = new StreamReader(entry.Open()))
-                meta = JsonSerializer.Deserialize<StorageMeta>(reader.ReadToEnd()) ?? 
+                meta = JsonSerializer.Deserialize<StorageMeta>(reader.ReadToEnd()) ??
                        throw new Exception("could not deserialize meta data");
 
             if (meta.Version < 1)
@@ -974,17 +466,11 @@ namespace ESPkMeansLib.Helpers
             var blobEntry = zip.GetEntry(StorageBlobId);
             if (blobEntry == null)
                 throw new Exception($"not a valid {nameof(DotProductIndexedVectors)} storage file");
-            
+
             using (var reader = new BinaryReader(new BufferedStream(blobEntry.Open())))
             {
                 if (reader.ReadInt32() != StorageBlobSignature)
                     throw new Exception($"not a valid {nameof(DotProductIndexedVectors)} storage file");
-                var mapLen = reader.ReadInt32();
-                var maps = new DotProductThItem[mapLen];
-                for (int i = 0; i < maps.Length; i++)
-                {
-                    maps[i] = DotProductThItem.FromReader(reader);
-                }
 
                 var len = reader.ReadInt32();
                 var indexedVectors = new Dictionary<int, FlexibleVector>(len);
@@ -996,9 +482,9 @@ namespace ESPkMeansLib.Helpers
                 }
 
                 len = reader.ReadInt32();
-                var globalMap = new DictListInt<int>();
+                var globalMap = new DictList<int, (int id, float tokenVal)>();
                 globalMap.EnsureDictCapacity(len);
-                var tList = new List<int>();
+                var tList = new List<(int id, float tokenVal)>();
                 for (int i = 0; i < len; i++)
                 {
                     var k = reader.ReadInt32();
@@ -1007,14 +493,19 @@ namespace ESPkMeansLib.Helpers
                     tList.EnsureCapacity(listLen);
                     for (int j = 0; j < listLen; j++)
                     {
-                        tList.Add(reader.ReadInt32());
+                        tList.Add((reader.ReadInt32(), reader.ReadSingle()));
                     }
                     globalMap.AddRange(k, tList);
                 }
 
-                return new DotProductIndexedVectors(meta, maps, indexedVectors, globalMap);
+                return new DotProductIndexedVectors(meta, indexedVectors, globalMap);
             }
-            
+
         }
+
+
+
+
+
     }
 }

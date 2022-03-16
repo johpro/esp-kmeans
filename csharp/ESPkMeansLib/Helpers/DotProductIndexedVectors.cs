@@ -302,10 +302,10 @@ namespace ESPkMeansLib.Helpers
                             continue;
                         int index = resList.BinarySearch((default, curVal), DpResultComparator.Default);
                         if (index < 0) index = ~index;
-                        if (index < resList.Count)                    // if (index != 0)
+                        if (index < resList.Count)                    
                         {
                             resList.Insert(index, (e.Current.Key, curVal));
-                            resList.RemoveAt(len);              // top.RemoveAt(0)
+                            resList.RemoveAt(len);
                         }
                     }
                 }

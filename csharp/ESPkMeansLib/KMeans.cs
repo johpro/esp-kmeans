@@ -62,7 +62,7 @@ namespace ESPkMeansLib
         /// <summary>
         /// Hyper-parameter that determines when to use the indexing structure for Spherical k-Means on sparse data (indexing structure does not pay off if only a handful of centroids change between iterations)
         /// </summary>
-        public int MinNumClustersForIndexedMeans { get; set; } = 30;
+        public int MinNumClustersForIndexedMeans { get; set; } = 50;
 
         private static T[] GetRandomSample<T>(T[] data, double ratio, int minItems = 1)
         {
@@ -456,7 +456,8 @@ namespace ESPkMeansLib
                     (clustersChangedMap.Count == 0 ||
                      clustersChangedMap.Count >= MinNumClustersForIndexedMeans ))
                     //only use INDEX strategy if number of changed clusters is high enough and other requirements set (spherical etc.)
-                    numChanged = UpdateClusteringIndexed(data, clustering, clusterMeans, clusteringChanges, indexedMeans);
+                    numChanged = UpdateClusteringIndexed(data, clustering, clusterMeans, clustersChangedMap,
+                        clusteringChanges, indexedMeans);
                 else
                     numChanged = UpdateClustering(data, clustering, clusterMeans, clustersChangedMap, clusteringChanges);
                
@@ -905,7 +906,7 @@ namespace ESPkMeansLib
 
 
         private int UpdateClusteringIndexed(FlexibleVector[] data, int[] clustering,
-           FlexibleVector[] means, (int clusterIdxFrom, int clusterIdxTo, int dataIdx)[]? changes, 
+           FlexibleVector[] means, List<int> clustersChangedMapSrc, (int clusterIdxFrom, int clusterIdxTo, int dataIdx)[]? changes, 
            DotProductIndexedVectors indexedMeans)
         {
             if (means.Length <= 1)
@@ -918,6 +919,10 @@ namespace ESPkMeansLib
             indexedMeans.Set(means);
             if (EnableVerboseLogging)
                 Trace.WriteLine($"indexed means in {watch.Elapsed}");
+
+            var completeMap = Enumerable.Range(0, means.Length).ToArray();
+            var clustersChangedMap = clustersChangedMapSrc.Count == 0 ? null : clustersChangedMapSrc.ToArray();
+
 
             //process items in batches to improve efficiency of parallelism for higher data set sizes
             var batchSize = Math.Max(1, Environment.ProcessorCount) * 3_000;
@@ -932,8 +937,38 @@ namespace ESPkMeansLib
                     {
                         var curRow = data[i];
                         var prevClusterId = clustering[i];
-                        var (k, _) = indexedMeans.GetNearestVectorArrayDict(curRow);
-                        var newClusterId = k;
+                        var newClusterId = prevClusterId;
+                        var bestDistance = means[prevClusterId].DotProductWith(curRow);
+                        //we cannot use index if bestDistance was negative (should rarely happen)
+                        var useIndex = bestDistance >= 0;
+
+                        if (useIndex)
+                        {
+                            var (k, _) = indexedMeans.GetNearestVectorArrayDict(curRow);
+                            if(k != -1) //no result could be found if we have best dot product of 0
+                                newClusterId = k;
+                        }
+                        else
+                        {
+                            var map = completeMap;
+                            if (clustersChangedMap != null &&
+                                clustersChangedMap.IndexOfValueInSortedArray(prevClusterId) == -1)
+                            {
+                                map = clustersChangedMap;
+                            }
+
+                            foreach (var k in map)
+                            {
+                                var meansVec = means[k];
+                                var distance = curRow.DotProductWith(meansVec);
+                                if (distance > bestDistance)
+                                {
+                                    bestDistance = distance;
+                                    newClusterId = k;
+                                }
+                            }
+                        }
+                        
                         if (newClusterId < 0)
                             throw new Exception("got erroneous newClusterId of " + newClusterId);
                         if (newClusterId != prevClusterId)

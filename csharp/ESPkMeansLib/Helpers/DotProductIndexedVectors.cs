@@ -122,11 +122,48 @@ namespace ESPkMeansLib.Helpers
         /// </summary>
         /// <param name="vector"></param>
         /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public (int id, float dotProduct) GetNearestVector(FlexibleVector vector)
         {
-            return GetNearestVector(vector, out _);
+            return
+                vector.Indexes.Length == 1
+                    ? GetNearestVector(vector.Indexes[0], vector.Values[0])
+                    : GetNearestVector(vector, out _);
         }
 
+
+        internal (int id, float dotProduct) GetNearestVector(int index, float tokenVal)
+        {
+            if (!_tokenToVectorsMap.TryGetValue(index, out var list) || list.Count == 0)
+                return (-1, default);
+            var bestId = list[0].id;
+            var bestVal = list[0].tokenVal;
+            if (tokenVal >= 0)
+            {
+                for (int i = 1; i < list.Count; i++)
+                {
+                    var curVal = list[i].tokenVal;
+                    if (curVal <= bestVal)
+                        continue;
+                    bestVal = curVal;
+                    bestId = list[i].id;
+                }
+            }
+            else
+            {
+                for (int i = 1; i < list.Count; i++)
+                {
+                    var curVal = list[i].tokenVal;
+                    if (curVal >= bestVal)
+                        continue;
+                    bestVal = curVal;
+                    bestId = list[i].id;
+                }
+            }
+
+            var dp = tokenVal * bestVal;
+            return dp > 0 ? (bestId, dp) : (-1, default);
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         internal (int id, float dotProduct) GetNearestVector(FlexibleVector vector, out int affectedClustersCount)
@@ -176,6 +213,7 @@ namespace ESPkMeansLib.Helpers
                 return (-1, default);
             return (bestId, bestDp);
         }
+        
 
         /// <summary>
         /// Get nearest vector given that we indexed an array of vectors, so that we can use
@@ -192,6 +230,9 @@ namespace ESPkMeansLib.Helpers
             var indexes = vector.Indexes;
             var values = vector.Values;
             var dict = ArrayPool<float>.Shared.Rent(MaxId + 1);
+            const int vecSize = 8;
+            if (Avx.IsSupported && vecSize != Vector256<float>.Count)
+                throw new Exception("AVX vector size mismatch");
             Array.Clear(dict, 0, MaxId + 1);
             try
             {
@@ -202,7 +243,49 @@ namespace ESPkMeansLib.Helpers
                         if (!_tokenToVectorsMap.TryGetValue(indexes[i], out var list))
                             continue;
                         var val = values[i];
-                        for (int j = 0; j < list.Count; j++)
+                        var j = 0;
+                        if (Avx.IsSupported && list.Count >= vecSize)
+                        {
+                            var limit = list.Count - vecSize;
+                            var valVec = Vector256.Create(val);
+                            for (; j <= limit; j += vecSize)
+                            {
+                                var (id7, tokenVal7) = list[j+7];
+                                var (id0, tokenVal0) = list[j];
+                                var (id1, tokenVal1) = list[j+1];
+                                var (id2, tokenVal2) = list[j+2];
+                                var (id3, tokenVal3) = list[j+3];
+                                var (id4, tokenVal4) = list[j+4];
+                                var (id5, tokenVal5) = list[j+5];
+                                var (id6, tokenVal6) = list[j+6];
+
+                                var tokenValVec = Vector256.Create(tokenVal0, tokenVal1, tokenVal2, tokenVal3,
+                                    tokenVal4, tokenVal5, tokenVal6, tokenVal7);
+                                var existingSums = Vector256.Create(dictPtr[id0], dictPtr[id1], dictPtr[id2],
+                                    dictPtr[id3], dictPtr[id4], dictPtr[id5], dictPtr[id6], dictPtr[id7]);
+                                
+                                if (Fma.IsSupported)
+                                {
+                                    existingSums = Fma.MultiplyAdd(valVec, tokenValVec, existingSums);
+                                }
+                                else
+                                {
+                                    var mul = Avx.Multiply(valVec, tokenValVec);
+                                    existingSums = Avx.Add(existingSums, mul);
+                                }
+
+                                dictPtr[id0] = existingSums.GetElement(0);
+                                dictPtr[id1] = existingSums.GetElement(1);
+                                dictPtr[id2] = existingSums.GetElement(2);
+                                dictPtr[id3] = existingSums.GetElement(3);
+                                dictPtr[id4] = existingSums.GetElement(4);
+                                dictPtr[id5] = existingSums.GetElement(5);
+                                dictPtr[id6] = existingSums.GetElement(6);
+                                dictPtr[id7] = existingSums.GetElement(7);
+                            }
+                        }
+
+                        for (; j < list.Count; j++)
                         {
                             var (id, tokenVal) = list[j];
                             dictPtr[id] += tokenVal * val;
@@ -215,21 +298,17 @@ namespace ESPkMeansLib.Helpers
                     for (int i = 0; i <= MaxId; i++)
                     {
                         var dp = dictPtr[i];
-                        if (dp <= 0)
-                            continue;
                         if (dp > bestDp)
                         {
                             bestDp = dp;
                             bestId = i;
                         }
                     }
-                    if (bestId == -1)
+                    if (bestId == -1 || bestDp <= 0)
                     {
                         return (-1, default);
                     }
-
-                    if (bestDp <= 0)
-                        return (-1, default);
+                    
                     return (bestId, bestDp);
                 }
             }
@@ -238,7 +317,7 @@ namespace ESPkMeansLib.Helpers
                 ArrayPool<float>.Shared.Return(dict);
             }
         }
-        
+
         /// <summary>
         /// Retrieve k nearest neighbors from index (can be fewer than k), sorted in descending order of similarity.
         /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
@@ -291,18 +370,18 @@ namespace ESPkMeansLib.Helpers
                         else
                             break;
                     }
-                    if(resList.Count > 1)
+                    if (resList.Count > 1)
                         resList.Sort(DpResultComparator.Default);
                     if (dict.Count <= len)
                         return resList;
                     while (e.MoveNext())
                     {
                         var curVal = e.Current.Value;
-                        if(curVal <= 0)
+                        if (curVal <= 0)
                             continue;
                         int index = resList.BinarySearch((default, curVal), DpResultComparator.Default);
                         if (index < 0) index = ~index;
-                        if (index < resList.Count)                    
+                        if (index < resList.Count)
                         {
                             resList.Insert(index, (e.Current.Key, curVal));
                             resList.RemoveAt(len);
@@ -349,7 +428,7 @@ namespace ESPkMeansLib.Helpers
             var resList = new List<(int id, float dotProduct)>(dict.Count);
             foreach (var p in dict)
             {
-                if(p.Value > 0)
+                if (p.Value > 0)
                     resList.Add((p.Key, p.Value));
             }
             _intFloatDictionaryBag.Add(dict);

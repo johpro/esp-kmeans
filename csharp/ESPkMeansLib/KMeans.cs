@@ -919,7 +919,7 @@ namespace ESPkMeansLib
             indexedMeans.Set(means);
             if (EnableVerboseLogging)
                 Trace.WriteLine($"indexed means in {watch.Elapsed}");
-
+            
             var completeMap = Enumerable.Range(0, means.Length).ToArray();
             var clustersChangedMap = clustersChangedMapSrc.Count == 0 ? null : clustersChangedMapSrc.ToArray();
 

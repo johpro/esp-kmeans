@@ -118,6 +118,25 @@ namespace ESPkMeansLib.Tests
                 Trace.WriteLine($"{watch.Elapsed / numRuns} | NCC+INDEX");
             }
         }
+        [TestMethod]
+        public void ClusterArxivIndexOnlyBenchmarkTest()
+        {
+            const int numRuns = 5;
+            var set = TestSet.LoadArxiv100K();
+            var kmeans = new KMeans { UseSphericalKMeans = true };
+            foreach (var numClusters in new[]{100, 1_000})
+            {
+                var watch = Stopwatch.StartNew();
+                
+                Trace.WriteLine($"\r\n{numClusters} clusters\r\n");
+                kmeans.UseIndexedMeans = true;
+                kmeans.UseClustersChangedMap = true;
+                watch.Restart();
+                kmeans.Cluster(set.Data!, numClusters, numRuns);
+                watch.Stop();
+                Trace.WriteLine($"{watch.Elapsed / numRuns} | NCC+INDEX");
+            }
+        }
 
         [TestMethod]
         public void ClusterArxivNeighborGraphTest()

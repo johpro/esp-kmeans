@@ -213,7 +213,7 @@ namespace ESPkMeansLib.Helpers
                 return (-1, default);
             return (bestId, bestDp);
         }
-        
+
 
         /// <summary>
         /// Get nearest vector given that we indexed an array of vectors, so that we can use
@@ -250,20 +250,20 @@ namespace ESPkMeansLib.Helpers
                             var valVec = Vector256.Create(val);
                             for (; j <= limit; j += vecSize)
                             {
-                                var (id7, tokenVal7) = list[j+7];
+                                var (id7, tokenVal7) = list[j + 7];
                                 var (id0, tokenVal0) = list[j];
-                                var (id1, tokenVal1) = list[j+1];
-                                var (id2, tokenVal2) = list[j+2];
-                                var (id3, tokenVal3) = list[j+3];
-                                var (id4, tokenVal4) = list[j+4];
-                                var (id5, tokenVal5) = list[j+5];
-                                var (id6, tokenVal6) = list[j+6];
+                                var (id1, tokenVal1) = list[j + 1];
+                                var (id2, tokenVal2) = list[j + 2];
+                                var (id3, tokenVal3) = list[j + 3];
+                                var (id4, tokenVal4) = list[j + 4];
+                                var (id5, tokenVal5) = list[j + 5];
+                                var (id6, tokenVal6) = list[j + 6];
 
                                 var tokenValVec = Vector256.Create(tokenVal0, tokenVal1, tokenVal2, tokenVal3,
                                     tokenVal4, tokenVal5, tokenVal6, tokenVal7);
                                 var existingSums = Vector256.Create(dictPtr[id0], dictPtr[id1], dictPtr[id2],
                                     dictPtr[id3], dictPtr[id4], dictPtr[id5], dictPtr[id6], dictPtr[id7]);
-                                
+
                                 if (Fma.IsSupported)
                                 {
                                     existingSums = Fma.MultiplyAdd(valVec, tokenValVec, existingSums);
@@ -294,7 +294,7 @@ namespace ESPkMeansLib.Helpers
 
                     int bestId = -1;
                     float bestDp = float.MinValue;
-                    
+
                     for (int i = 0; i <= MaxId; i++)
                     {
                         var dp = dictPtr[i];
@@ -308,7 +308,7 @@ namespace ESPkMeansLib.Helpers
                     {
                         return (-1, default);
                     }
-                    
+
                     return (bestId, bestDp);
                 }
             }
@@ -403,7 +403,14 @@ namespace ESPkMeansLib.Helpers
         /// </summary>
         /// <param name="vector"></param>
         /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public List<(int id, float dotProduct)> GetNearbyVectors(FlexibleVector vector)
+        {
+            return vector.Indexes.Length == 1
+                ? GetNearbyVectors(vector.Indexes[0], vector.Values[0])
+                : GetNearbyVectorsFull(vector);
+        }
+        private List<(int id, float dotProduct)> GetNearbyVectorsFull(FlexibleVector vector)
         {
             if (!vector.IsSparse)
                 vector = vector.ToSparse();
@@ -435,6 +442,21 @@ namespace ESPkMeansLib.Helpers
             return resList;
 
 
+        }
+
+        private List<(int id, float dotProduct)> GetNearbyVectors(int tokenIndex, float tokenValue)
+        {
+            if (!_tokenToVectorsMap.TryGetValue(tokenIndex, out var list) || list.Count == 0)
+                return new List<(int id, float dotProduct)>(0);
+            var resList = new List<(int id, float dotProduct)>(list.Count);
+            for (int j = 0; j < list.Count; j++)
+            {
+                var (id, tokenVal) = list[j];
+                var dp = tokenVal * tokenValue;
+                if(dp > 0)
+                    resList.Add((id, dp));
+            }
+            return resList;
         }
 
         private class DpResultComparator : IComparer<(int id, float dotProduct)>

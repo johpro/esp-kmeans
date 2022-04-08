@@ -102,7 +102,7 @@ namespace ESPkMeansLib.Helpers
                 InternalAdd(vectors[i], i);
             }
             _wasChanged = true;
-            Thread.MemoryBarrier();
+            UpdateTokenMaxValueMap();
 
         }
 
@@ -160,7 +160,7 @@ namespace ESPkMeansLib.Helpers
             var th3 = Math.Max(10, VectorsCount / 500);
             _maxListSizeFirstRun = th1;
 
-            var lists = _tokenToVectorsMap.EntryLists;
+            var lists = _tokenToVectorsMap.EntryLists.ToArray();
 
             if (th1 != th2 && _tokenToVectorsMap.Count > 1000)
             {
@@ -193,12 +193,13 @@ namespace ESPkMeansLib.Helpers
             //for each big list, we only consider the eight entries with the highest associated value
             //in the first pass and skip the remaining ones (we can use 9th value for computing an
             //upper bound of the possible contribution to the dot product)
-            foreach (var list in lists)
+            Parallel.For(0, lists.Length, i =>
             {
+                var list = lists[i];
                 if (list == null || list.Count <= _maxListSizeFirstRun)
-                    continue;
+                    return;
                 BringTopKValuesToTop(list, 9);
-            }
+            });
 
             _wasChanged = false;
             Thread.MemoryBarrier();
@@ -253,6 +254,7 @@ namespace ESPkMeansLib.Helpers
         {
             if (!_tokenToVectorsMap.TryGetValue(index, out var list) || list.Count == 0)
                 return (-1, default);
+            EnsureTokenMaxValueMap();
             var bestId = list[0].id;
             var bestVal = list[0].tokenVal;
             if (tokenVal >= 0)

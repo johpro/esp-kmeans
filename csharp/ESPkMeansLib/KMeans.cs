@@ -944,7 +944,10 @@ namespace ESPkMeansLib
 
                         if (useIndex)
                         {
-                            var (k, _) = indexedMeans.GetNearestVectorArrayDict(curRow);
+                            var (k, _) =
+                                bestDistance > 0.3f
+                                    ? indexedMeans.GetNearestVector(curRow, bestDistance)
+                                    : indexedMeans.GetNearestVectorArrayDict(curRow);
                             if(k != -1) //no result could be found if we have best dot product of 0
                                 newClusterId = k;
                         }

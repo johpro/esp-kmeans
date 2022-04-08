@@ -10,8 +10,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using ElskeLib;
 using ESPkMeansLib.Helpers;
 using ESPkMeansLib.Model;
+using ESPkMeansLib.Tests.datasets;
 using ESPkMeansLib.Tests.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -106,10 +108,16 @@ namespace ESPkMeansLib.Tests.Helpers
                         var tSet = indexVectors.Select((v, i) => (v, i))
                             .Where(p => p.v.DotProductWith(qV) >= threshold).Select(p => p.i).ToList();
 
-                        var retrieved = db.GetNearbyVectors(qV).Where(p => p.dotProduct >= threshold).ToList();
+                        var retrieved = db.GetNearbyVectors(qV)
+                            .Where(p => p.dotProduct >= threshold).ToList();
                         var intersection = tSet.Intersect(retrieved.Select(p => p.id));
                         Assert.AreEqual(tSet.Count, intersection.Count());
                         Trace.WriteLine($"th {threshold}: {tSet.Count} above th, {retrieved.Count} retrieved");
+
+                        retrieved = db.GetNearbyVectors(qV, threshold)
+                            .Where(p => p.dotProduct >= threshold).ToList();
+                        intersection = tSet.Intersect(retrieved.Select(p => p.id));
+                        Assert.AreEqual(tSet.Count, intersection.Count());
                     }
                 }
                 db.Clear();
@@ -137,6 +145,7 @@ namespace ESPkMeansLib.Tests.Helpers
                     else
                     {
                         db = DotProductIndexedVectors.FromFile(tmpFn);
+                        Trace.WriteLine("loaded.");
                     }
 
                     var thresholds = new[] { 0, 1, 3, 5, 8, 11, 20, 100, 10_000 };
@@ -163,7 +172,7 @@ namespace ESPkMeansLib.Tests.Helpers
 
                             var groundTruthComplete = indexVectors
                                 .Select((v2, i) => (v2, i))
-                                .Where(p => v.DotProductWith(p.v2) >= smDp)
+                                .Where(p => v.DotProductWith(p.v2) >= smDp-0.001f)
                                 .Select(p => p.i)
                                 .ToArray();
 
@@ -211,6 +220,188 @@ namespace ESPkMeansLib.Tests.Helpers
             db.Set(set);
             Trace.WriteLine($"{watch.Elapsed} default"); watch.Restart();
         }
-        
+
+
+        [TestMethod]
+        public void NearestVectorsSpeedTest()
+        {
+            const int numClusters = 2000;
+            var count = 0;
+            var watch = Stopwatch.StartNew();
+            var set = TestSet.LoadArxiv100K();
+            Trace.WriteLine($"{watch.Elapsed} data loaded");
+            watch.Restart();            
+            var clustering = new int[set.Data!.Length];
+            var rnd = new Random();
+            for (int i = 0; i < clustering.Length; i++)
+                clustering[i] = rnd.Next(numClusters);
+            Trace.WriteLine($"{watch.Elapsed} clustering set");
+            watch.Restart();
+            var kMeans = new KMeans { UseSphericalKMeans = true, UseKMeansPlusPlusInitialization = false};
+            //var (means, _) = MeanCalculations.GetMeans(set.Data, numClusters, clustering, true);
+            var (_, means) = kMeans.Cluster(set.Data, numClusters);
+            Trace.WriteLine($"{watch.Elapsed} means computed");
+            watch.Restart();
+            var targets = means; // means.Skip(1000).ToArray();
+            var db = new DotProductIndexedVectors();
+            db.Set(targets);
+            Trace.WriteLine($"{watch.Elapsed} means indexed");
+            watch.Restart();
+
+            for (int i = 0; i < 100; i++)
+            {
+                var vec = means[i];
+                db.GetNearestVector(vec);
+            }
+            for (int i = 0; i < 1000; i++)
+            {
+                var vec = set.Data[i];
+                db.GetNearestVector(vec);
+            }
+            watch.Stop();
+            for (int i = 90; i < 100; i++)
+            {
+                var vec = means[i];
+                var (id, dp) = db.GetNearestVector(vec);
+                var target = targets.MaxItem(v => v.DotProductWith(vec));
+                Assert.AreEqual(Array.IndexOf(targets, target), id);
+                Assert.AreEqual(target.DotProductWith(vec), dp, 0.0001f);
+            }
+
+            Trace.WriteLine($"{watch.Elapsed} GetNearestVector");
+            watch.Restart();
+
+            for (int i = 100; i < 200; i++)
+            {
+                var vec = means[i];
+                db.GetKNearestVectors(vec, 10);
+            }
+
+            for (int i = 1000; i < 2000; i++)
+            {
+                var vec = set.Data[i]; 
+                db.GetKNearestVectors(vec, 10);
+            }
+            watch.Stop();
+            for (int i = 180; i < 200; i++)
+            {
+                var vec = means[i];
+                var list = db.GetKNearestVectors(vec, 10);
+                var targetList = targets
+                    .OrderByDescending(v => v.DotProductWith(vec))
+                    .Take(10).Where(v => v.DotProductWith(vec) > 0).ToArray();
+                Assert.AreEqual(targetList.Length, list.Count);
+                for (int j = 0; j < targetList.Length; j++)
+                {
+                    var idx = Array.IndexOf(targets, targetList[j]);
+                    Assert.IsTrue(list.Any(it => it.id == idx));
+                }
+            }
+
+            Trace.WriteLine($"{watch.Elapsed} Get10NearestVectors");
+            watch.Restart();
+
+            for (int i = 200; i < 300; i++)
+            {
+                var vec = means[i];
+                db.GetKNearestVectors(vec, 30);
+            }
+            watch.Stop();
+            for (int i = 280; i < 300; i++)
+            {
+                var vec = means[i];
+                var list = db.GetKNearestVectors(vec, 30);
+                var targetList = targets
+                    .OrderByDescending(v => v.DotProductWith(vec))
+                    .Take(30).Where(v => v.DotProductWith(vec) > 0).ToArray();
+                Assert.AreEqual(targetList.Length, list.Count);
+                for (int j = 0; j < targetList.Length; j++)
+                {
+                    var idx = Array.IndexOf(targets, targetList[j]);
+                    Assert.IsTrue(list.Any(it => it.id == idx));
+                }
+            }
+
+            Trace.WriteLine($"{watch.Elapsed} Get30NearestVectors");
+            watch.Restart();
+            
+            for (int i = 300; i < 400; i++)
+            {
+                var vec = means[i];
+                db.GetNearbyVectors(vec);
+            }
+            watch.Stop();
+            for (int i = 390; i < 400; i++)
+            {
+                var vec = means[i];
+                var list = db.GetNearbyVectors(vec);
+                var targetList = targets
+                    .Where(v => v.DotProductWith(vec) > 0).ToArray();
+                Assert.AreEqual(targetList.Length, list.Count);
+                for (int j = 0; j < targetList.Length; j++)
+                {
+                    var idx = Array.IndexOf(targets, targetList[j]);
+                    Assert.IsTrue(list.Any(it => it.id == idx));
+                }
+            }
+
+            Trace.WriteLine($"{watch.Elapsed} GetNearbyVectors");
+            watch.Restart();
+
+            count = 0;
+            for (int i = 400; i < 500; i++)
+            {
+                var vec = means[i];
+                db.GetNearbyVectors(vec, 0.4f);
+            }
+            watch.Stop();
+            for (int i = 490; i < 500; i++)
+            {
+                var vec = means[i];
+                var list = db.GetNearbyVectors(vec, 0.4f);
+                //count += list.Count;
+                var targetList = targets
+                    .Where(v => v.DotProductWith(vec) >= 0.4f).ToArray();
+                count += targetList.Length;
+                Assert.IsTrue(targetList.Length <= list.Count);
+                for (int j = 0; j < targetList.Length; j++)
+                {
+                    var idx = Array.IndexOf(targets, targetList[j]);
+                    Assert.IsTrue(list.Any(it => it.id == idx));
+                }
+            }
+
+            Trace.WriteLine($"{watch.Elapsed} GetNearbyVectors 0.4 with {count} results");
+            watch.Restart();
+
+
+            count = 0;
+            for (int i = 500; i < 600; i++)
+            {
+                var vec = means[i];
+                db.GetNearbyVectors(vec, 0.3f);
+            }
+            watch.Stop();
+            for (int i = 590; i < 600; i++)
+            {
+                var vec = means[i];
+                var list = db.GetNearbyVectors(vec, 0.3f);
+                //count += list.Count;
+                var targetList = targets
+                    .Where(v => v.DotProductWith(vec) >= 0.3f).ToArray();
+                count += targetList.Length;
+                Assert.IsTrue(targetList.Length <= list.Count);
+                for (int j = 0; j < targetList.Length; j++)
+                {
+                    var idx = Array.IndexOf(targets, targetList[j]);
+                    Assert.IsTrue(list.Any(it => it.id == idx));
+                }
+            }
+
+            Trace.WriteLine($"{watch.Elapsed} GetNearbyVectors 0.3 with {count} results");
+            watch.Restart();
+
+        }
+
     }
 }

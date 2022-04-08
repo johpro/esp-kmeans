@@ -41,13 +41,25 @@ namespace ESPkMeansLib.Model
 
         internal int Tag { get; set; }
 
-        
+        /// <summary>
+        /// Returns true if this is a sparse vector that has been sorted with the ToSortedVector() method.
+        /// </summary>
+        public bool IsSorted
+        {
+            get
+            {
+                Thread.MemoryBarrier();
+                return _isSorted;
+            }
+        }
+
         private readonly int[]? _indexes;
-        
+
         private readonly float[] _values;
 
         private volatile bool _isUnitVectorSet;
         private volatile bool _isUnitVector;
+        private volatile bool _isSorted;
 
         /// <summary>
         /// Whether this instance represents a sparse vector
@@ -88,7 +100,6 @@ namespace ESPkMeansLib.Model
         [JsonConstructor]
         internal FlexibleVector(int[]? indexes, float[] values) : this(indexes, values, InitBuckets(indexes))
         {
-
         }
 
         private FlexibleVector(int[]? indexes, float[] values, (int[] entries, int[] buckets, ulong fastModMult) entriesBuckets)
@@ -324,7 +335,7 @@ namespace ESPkMeansLib.Model
             var numBuckets = (uint)HashHelpers.GetPrime(indexes.Length);
             var fastModMult = HashHelpers.GetFastModMultiplier(numBuckets);
             var buckets = new int[numBuckets];
-            
+
             fixed (int* bucketsPtr = buckets)
             {
                 var distinctCount = 0;
@@ -347,7 +358,7 @@ namespace ESPkMeansLib.Model
                 //number of indexes that lead to such collisions: indexes.Length - (distinctCount - numHashesWithCollisions)
                 var entries = new int[2 * numHashesWithCollisions + indexes.Length - distinctCount + 1];
 
-                fixed (int* entriesPtr = entries, indexesPtr= indexes)
+                fixed (int* entriesPtr = entries, indexesPtr = indexes)
                 {
                     var curIdx = 1;
                     for (var i = 0; i < indexes.Length; i++)
@@ -375,15 +386,15 @@ namespace ESPkMeansLib.Model
                         }
                         else
                         { //we have already reserved block in entries array
-                            //also check that we do not add same index twice
-                            
+                          //also check that we do not add same index twice
+
                             //prev now refers to index in entries array with number of items in this bucket
                             //the following entries refer to the index in the indexes array that belong to this bucket
                             var entriesHeader = entriesPtr + prev;
                             var curCount = *entriesHeader + 1;
                             //now first do some sanity checks that the list of indexes is unique
                             var lim = entriesHeader + curCount;
-                            for (var ptr = entriesHeader+1; ptr < lim; ptr++)
+                            for (var ptr = entriesHeader + 1; ptr < lim; ptr++)
                             {
                                 if (indexesPtr[*ptr] == idx)
                                     throw new Exception("sparse vector must not have two entries with the same index");
@@ -548,7 +559,7 @@ namespace ESPkMeansLib.Model
             var ptrToHeader = entries + entriesIdx;
             var ptr = ptrToHeader + 1;
             var endPtr = ptr + *ptrToHeader;
-            
+
             for (; ptr < endPtr; ptr++)
             {
                 pos = *ptr;
@@ -573,6 +584,7 @@ namespace ESPkMeansLib.Model
             _squaredSumSet = false;
             _maxValueSet = false;
             _isUnitVectorSet = false;
+            _isSorted = false;
         }
 
         /// <summary>
@@ -605,7 +617,7 @@ namespace ESPkMeansLib.Model
                 {
                     var i = 0;
                     var limit = _values.Length - vecSize;
-                    
+
                     for (; i <= limit; i += vecSize)
                     {
                         var v = Avx.LoadVector256(values + i);
@@ -746,7 +758,7 @@ namespace ESPkMeansLib.Model
                 throw new ArgumentException("both vectors need to be of same size");
 
             double sumSquaredDiffs = 0.0;
-            
+
             const int vecSize = 8;
 
             if (Avx.IsSupported && _values.Length >= vecSize)
@@ -776,7 +788,7 @@ namespace ESPkMeansLib.Model
                             sumVec = Avx.Add(sumVec, squared);
                         }
                     }
-                    
+
                     sumSquaredDiffs += sumVec.GetElement(0)
                                        + sumVec.GetElement(1)
                                        + sumVec.GetElement(2)
@@ -876,6 +888,9 @@ namespace ESPkMeansLib.Model
 
             lock (this)
             {
+                if (_maxValueSet)
+                    return _maxValue;
+
                 float maxVal = float.MinValue;
                 foreach (var value in _values)
                 {
@@ -909,7 +924,8 @@ namespace ESPkMeansLib.Model
             var sum = 0d;
             lock (this)
             {
-
+                if (_squaredSumSet)
+                    return _squaredSum;
                 const int vecSize = 8;
 
 
@@ -966,10 +982,9 @@ namespace ESPkMeansLib.Model
                         sum += val * val;
                     }
                 }
+                _squaredSum = sum;
+                _squaredSumSet = true;
             }
-            Interlocked.Exchange(ref _squaredSum, sum);
-            _squaredSumSet = true;
-            Thread.MemoryBarrier();
             return sum;
         }
 
@@ -986,7 +1001,7 @@ namespace ESPkMeansLib.Model
         {
             if (!IsUnitVector || !other.IsUnitVector)
                 throw new Exception("only works with unit vectors");
-            return 1 - DotProductWith(other); 
+            return 1 - DotProductWith(other);
         }
 
         /// <summary>
@@ -1001,7 +1016,7 @@ namespace ESPkMeansLib.Model
         {
             if (!IsUnitVector)
                 throw new Exception("only works with unit vectors");
-            return 1- DotProductWith(other);
+            return 1 - DotProductWith(other);
         }
 
         /// <summary>
@@ -1235,7 +1250,8 @@ namespace ESPkMeansLib.Model
         }
 
         /// <summary>
-        /// Return new vector in which the sparse (index, value) entry pairs are sorted in descending order of the value.
+        /// Returns vector in which the sparse (index, value) entry pairs are sorted in descending order of the value.
+        /// Returns current instance if IsSorted is true (method was already called to create this instance).
         /// </summary>
         /// <returns></returns>
         /// <exception cref="InvalidOperationException">throws an exception if the vector is dense</exception>
@@ -1243,12 +1259,25 @@ namespace ESPkMeansLib.Model
         {
             if (_indexes == null)
                 throw new InvalidOperationException("only sparse vectors can be sorted");
+            if (_isSorted)
+                return this;
             var indexes = _indexes.ToArray();
             var values = _values.ToArray();
-            Array.Sort(values, indexes);
-            Array.Reverse(indexes);
-            Array.Reverse(values);
-            return new FlexibleVector(indexes, values);
+            if (indexes.Length > 1)
+            {
+                Array.Sort(values, indexes);
+                Array.Reverse(indexes);
+                Array.Reverse(values);
+            }
+            var vec = new FlexibleVector(indexes, values);
+            vec._isUnitVector = _isUnitVector;
+            vec._isUnitVectorSet = _isUnitVectorSet;
+            vec._squaredSum = _squaredSum;
+            vec._squaredSumSet = _squaredSumSet;
+            vec._maxValue = _maxValue;
+            vec._maxValueSet = _maxValueSet;
+            vec._isSorted = true;
+            return vec;
         }
 
         /// <summary>
@@ -1270,7 +1299,7 @@ namespace ESPkMeansLib.Model
 
             if (_indexes != null && other._indexes == null)
                 return other.ValueEquals(this);
-            
+
             if (_indexes == null)
             {
                 if (other._indexes == null)
@@ -1288,7 +1317,7 @@ namespace ESPkMeansLib.Model
 
                     return true;
                 }
-                
+
                 //this is dense, other is sparse
 
                 for (int i = 0; i < _values.Length; i++)
@@ -1297,11 +1326,11 @@ namespace ESPkMeansLib.Model
                         return false;
                 }
 
-                
+
                 for (int i = 0; i < other._indexes.Length; i++)
                 {
                     var idx = other._indexes[i];
-                    if(idx >= 0 && idx < _values.Length)
+                    if (idx >= 0 && idx < _values.Length)
                         continue;//already tested
                     if (Math.Abs(other._values[i]) > epsilon)
                         return false;
@@ -1311,7 +1340,7 @@ namespace ESPkMeansLib.Model
             }
 
             //both are sparse
-            
+
             var numEntriesFoundInB = 0;
             fixed (float* values = _values)
             {
@@ -1566,7 +1595,7 @@ namespace ESPkMeansLib.Model
         /// <returns></returns>
         public string ToJson(JsonSerializerOptions? options = null)
         {
-            return JsonSerializer.Serialize(new FlexibleVectorStorage(_indexes,  _values), options);
+            return JsonSerializer.Serialize(new FlexibleVectorStorage(_indexes, _values), options);
         }
 
         /// <summary>
@@ -1594,7 +1623,7 @@ namespace ESPkMeansLib.Model
             writer.WriteEndObject();
         }
 
-        
+
 
         public override string ToString()
         {
@@ -1621,7 +1650,7 @@ namespace ESPkMeansLib.Model
             return string.Join(", ", vals.Select(p => $"({p.idx}, {p.val.ToString(CultureInfo.InvariantCulture)})"));
         }
 
-        
+
     }
 
     internal class FlexibleVectorStorage

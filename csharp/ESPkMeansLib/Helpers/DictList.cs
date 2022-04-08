@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,13 +24,15 @@ namespace ESPkMeansLib.Helpers
     /// </summary>
     /// <typeparam name="TKey"></typeparam>
     /// <typeparam name="TValue"></typeparam>
-    public class DictList<TKey, TValue> where TKey : notnull
+    public class DictList<TKey, TValue> : IEnumerable<(TKey key, IList<TValue> list)> where TKey : notnull
     {
 
         private readonly Dictionary<TKey, (TValue entry, List<TValue>? list)> _dict = new();
         private List<TValue>?[] _entries = new List<TValue>[4];
         private int _entriesCount;
         private int _availableCount;
+
+        internal ReadOnlySpan<List<TValue>?> EntryLists => _entries.AsSpan(0, _entriesCount);
 
         public int Count => _dict.Count;
         public int EntriesCount => _entriesCount;
@@ -173,6 +176,54 @@ namespace ESPkMeansLib.Helpers
             }
             list = p.list != null ? p.list : new[] { p.entry };
             return true;
+        }
+
+        public IEnumerator<(TKey key, IList<TValue> list)> GetEnumerator()
+        {
+            return new Enumerator(this);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
+
+        public struct Enumerator : IEnumerator<(TKey key, IList<TValue> list)>
+        {
+            private (TKey key, IList<TValue> list) _current;
+            private Dictionary<TKey, (TValue entry, List<TValue>? list)>.Enumerator _dictEnumerator;
+            
+
+            internal Enumerator(DictList<TKey, TValue> dictionary)
+            {
+                _dictEnumerator = dictionary._dict.GetEnumerator();
+                _current = default;
+            }
+
+            public void Dispose()
+            {
+            }
+
+            public bool MoveNext()
+            {
+                ref var en = ref _dictEnumerator;
+                while (en.MoveNext())
+                {
+                    IList<TValue> list = en.Current.Value.list ?? (IList<TValue>) new []{en.Current.Value.entry};
+                    _current = (en.Current.Key, list);
+                    return true;
+                }
+                return false;
+            }
+
+            public (TKey key, IList<TValue> list) Current => _current;
+
+            object? IEnumerator.Current => _current;
+
+            void IEnumerator.Reset()
+            {
+                throw new NotImplementedException();
+            }
         }
     }
 }

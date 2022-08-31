@@ -564,10 +564,17 @@ namespace ESPkMeansLib.Helpers
 
                             skippedLists.Clear();
                             dpIncrementOffset = 0;
+                            resList.Clear();
+                            resList.EnsureCapacity(dict.Count);
+                            foreach (var p in dict)
+                            {
+                                resList.Add((p.Key, p.Value));
+                            }
                         }
                     }
                     else
                     {
+                        resList.EnsureCapacity(dict.Count);
                         foreach (var p in dict)
                         {
                             resList.Add((p.Key, p.Value));

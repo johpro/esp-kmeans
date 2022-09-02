@@ -42,6 +42,8 @@ namespace ESPkMeansLib.Helpers
 
         private volatile bool _wasChanged = false;
         private volatile bool _allEntriesAreNonNegative = true;
+        private volatile float _maxDpOffsetValue = MaxDpOffsetDefaultValue;
+        private const float MaxDpOffsetDefaultValue = 0.3f;
 
         public DotProductIndexedVectors()
         {
@@ -79,6 +81,7 @@ namespace ESPkMeansLib.Helpers
             _indexedVectors.Clear();
             _tokenToVectorsMap.Clear();
             _maxListSizeFirstRun = 0;
+            _maxDpOffsetValue = MaxDpOffsetDefaultValue;
             VectorsCount = 0;
             MaxId = 0;
             _wasChanged = false;
@@ -201,6 +204,29 @@ namespace ESPkMeansLib.Helpers
                 BringTopKValuesToTop(list, 9);
             });
 
+            //check whether our default value for our long-list-avoiding shortcut is suitable
+            var maxVal = 0f;
+            var avgVal = 0f;
+            var listCount = 0;
+            foreach (var list in lists)
+            {
+                if(list == null || list.Count <= _maxListSizeFirstRun)
+                    continue;
+                maxVal = Math.Max(maxVal, Math.Abs(list[0].tokenVal));
+                avgVal += Math.Abs(list[8].tokenVal);
+                listCount++;
+            }
+            
+            if (maxVal <= 1.1f)
+            {
+                _maxDpOffsetValue = MaxDpOffsetDefaultValue;
+            }
+            else
+            {
+                avgVal /= lists.Length;
+                _maxDpOffsetValue = Math.Max(MaxDpOffsetDefaultValue, avgVal * avgVal * 3);
+            }
+
             _wasChanged = false;
             Thread.MemoryBarrier();
         }
@@ -309,7 +335,7 @@ namespace ESPkMeansLib.Helpers
                 try
                 {
                     var isHardTh = minDotProduct > 0.04f;
-                    var maxDpIncrement = 0.3f;
+                    var maxDpIncrement = _maxDpOffsetValue;
                     if (isHardTh)
                     {
                         if (minDotProduct >= 0.3f)
@@ -535,7 +561,7 @@ namespace ESPkMeansLib.Helpers
 
                     var resList = new List<(int id, float dotProduct)>(k + 1);
                     var len = GetNearestVectorsCandidates(k, vector, skippedLists, dict,
-                        ref dpIncrementOffset, 0.3f);
+                        ref dpIncrementOffset, _maxDpOffsetValue);
 
                     if (len == 0)
                         return resList;

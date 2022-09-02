@@ -349,3 +349,4 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 /csharp/ESkMeansLib.Tests/datasets/20news.json.gz
+/csharp/ESPkMeansLib.Tests/datasets/wordvectors.bin.gz

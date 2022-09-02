@@ -658,6 +658,8 @@ namespace ESPkMeansLib.Helpers
             var endLimit = offset + count;
             if (Avx.IsSupported && count >= vecSize)
             {
+                //important that dict won't resize between reference retrieval
+                dict.EnsureCapacity(count+dict.Count);
                 var limit = endLimit - vecSize;
                 var valVec = Vector256.Create(val);
                 for (; j <= limit; j += vecSize)
@@ -674,6 +676,8 @@ namespace ESPkMeansLib.Helpers
                     var tokenValVec = Vector256.Create(tokenVal0, tokenVal1, tokenVal2, tokenVal3,
                         tokenVal4, tokenVal5, tokenVal6, tokenVal7);
 
+                    //IMPORTANT: when we get reference to entry, this is only valid as long as dictionary does not
+                    //resize since we have then stale references to an array that is not used anymore
                     ref var dictRef0 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id0, out _);
                     ref var dictRef1 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id1, out _);
                     ref var dictRef2 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id2, out _);
@@ -682,6 +686,7 @@ namespace ESPkMeansLib.Helpers
                     ref var dictRef5 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id5, out _);
                     ref var dictRef6 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id6, out _);
                     ref var dictRef7 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id7, out _);
+                    
 
                     var existingSums = Vector256.Create(dictRef0, dictRef1, dictRef2, dictRef3, dictRef4,
                         dictRef5, dictRef6, dictRef7);
@@ -695,7 +700,7 @@ namespace ESPkMeansLib.Helpers
                         var mul = Avx.Multiply(valVec, tokenValVec);
                         existingSums = Avx.Add(existingSums, mul);
                     }
-
+                    
                     dictRef0 = existingSums.GetElement(0);
                     dictRef1 = existingSums.GetElement(1);
                     dictRef2 = existingSums.GetElement(2);
@@ -809,9 +814,10 @@ namespace ESPkMeansLib.Helpers
             else
             {
                 var itemsAboveIncrement = 0;
+                var th = dpIncrementOffset + 0.001f;
                 foreach (var val in dict.Values)
                 {
-                    if (val > dpIncrementOffset)
+                    if (val > th)
                     {
                         itemsAboveIncrement++;
                         if (itemsAboveIncrement >= k)
@@ -856,6 +862,7 @@ namespace ESPkMeansLib.Helpers
                 var curVal = list[i];
                 int index = list.BinarySearch(0, k, curVal, DpResultComparator.Default);
                 if (index < 0) index = ~index;
+                //index is either index of item with same value or the highest value that is lower than curVal
                 if (index < k)
                 {
                     //insert curVal at index and move others one down the list = move element at pos k to i so that
@@ -1045,12 +1052,13 @@ namespace ESPkMeansLib.Helpers
                     skippedLists = new List<(int token, float val, IList<(int id, float val)> list)>();
                 try
                 {
+                    var maxDpIncrement = dpThreshold >= 0.2f
+                        ? dpThreshold - 0.1f
+                        : (dpThreshold >= 0.1f
+                            ? dpThreshold - 0.05f
+                            : dpThreshold - 0.001f);
                     GetNearestVectorsCandidates(int.MaxValue, vector, skippedLists, dict,
-                        ref dpIncrementOffset, dpThreshold >= 0.2f
-                            ? dpThreshold - 0.1f
-                            : (dpThreshold >= 0.1f
-                                ? dpThreshold - 0.05f
-                                : dpThreshold - 0.001f), true);
+                        ref dpIncrementOffset, maxDpIncrement, true);
 
                     var resList = new List<(int id, float dotProduct)>(dict.Count);
                     if (dict.Count == 0)
@@ -1080,7 +1088,7 @@ namespace ESPkMeansLib.Helpers
                             }
 
                             skippedLists.Clear();
-                            threshold = dpThreshold;
+                            threshold = dpThreshold - 0.001f;
                         }
                     }
 

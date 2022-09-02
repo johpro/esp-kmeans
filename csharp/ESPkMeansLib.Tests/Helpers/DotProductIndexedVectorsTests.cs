@@ -22,7 +22,7 @@ namespace ESPkMeansLib.Tests.Helpers
     [TestClass]
     public class DotProductIndexedVectorsTests
     {
-        private static (List<FlexibleVector> queryVectors, FlexibleVector[] indexVectors) CreateQueryAndIndexVectors(int nInitQuery = 10, int nIndex = 1_000)
+        private static (List<FlexibleVector> queryVectors, FlexibleVector[] indexVectors) CreateQueryAndIndexVectors(int nInitQuery = 10, int nIndex = 10_000)
         {
             var queryVectors = FlexibleVectorTests.CreateRandomVectors(nInitQuery, true).ToList();
             var indexVectors = FlexibleVectorTests.CreateRandomVectors(nIndex, true)
@@ -80,6 +80,15 @@ namespace ESPkMeansLib.Tests.Helpers
             }
             return (queryVectors, indexVectors.ToArray());
         }
+
+        private static (List<FlexibleVector> queryVectors, FlexibleVector[] indexVectors) GetWordVectors(int nInitQuery = 1000)
+        {
+            var vectors = FlexibleVector.ArrayFromFile("datasets/wordvectors.bin.gz");
+            Trace.WriteLine($"{vectors.Length} vectors loaded");
+            vectors.Shuffle();
+            return (vectors[..nInitQuery].ToList(), vectors[nInitQuery..]);
+        }
+
         [TestMethod]
         public void DotProductIndexedVectorsTest()
         {
@@ -125,6 +134,34 @@ namespace ESPkMeansLib.Tests.Helpers
 
         }
 
+        [TestMethod]
+        public void DotProductIndexedVectorsWordVectorsTest()
+        {
+            var (queryVectors, indexVectors) = GetWordVectors();
+            var thresholds = new[] { 0.05f, 0.25f, 0.4f, 0.6f, 0.85f };
+            var db = new DotProductIndexedVectors();
+            var watch = new Stopwatch();
+            db.Set(indexVectors);
+            Trace.WriteLine($"{watch.Elapsed} for creating db");
+            Assert.AreEqual(indexVectors.Length, db.VectorsCount);
+
+            Parallel.For(0, queryVectors.Count, r =>
+            {
+                var qV = queryVectors[r];
+                foreach (var threshold in thresholds)
+                {
+                    var tSet = indexVectors.Select((v, i) => (v, i))
+                        .Where(p => p.v.DotProductWith(qV) >= threshold).Select(p => p.i).ToList();
+                    var retrieved = db.GetNearbyVectors(qV, threshold)
+                        .Where(p => p.dotProduct >= threshold - 0.01f).ToList();
+                    var intersection = tSet.Intersect(retrieved.Select(p => p.id));
+                    Assert.AreEqual(tSet.Count, intersection.Count(),
+                        $"not all {tSet.Count} required vectors with dp >= {threshold} retrieved");
+                }
+
+            });
+        }
+
 
         [TestMethod]
         public void GetKNearestNeighborsTest()
@@ -148,54 +185,7 @@ namespace ESPkMeansLib.Tests.Helpers
                         Trace.WriteLine("loaded.");
                     }
 
-                    var thresholds = new[] { 0, 1, 3, 5, 8, 11, 20, 100, 10_000 };
-                    foreach (var v in queryVectors)
-                    {
-                        foreach (var k in thresholds)
-                        {
-                            if (v.Length == 0 || k == 0)
-                            {
-                                Assert.AreEqual(0, db.GetKNearestVectors(v, k).Count);
-                                continue;
-                            }
-
-                            var groundTruth = indexVectors
-                                .Select((v2, i) => (v2, i))
-                                .OrderByDescending(p => v.DotProductWith(p.v2))
-                                .Take(k)
-                                .Where(p => v.DotProductWith(p.v2) > 0)
-                                .Select(p => p.i)
-                                .ToArray();
-
-
-                            var smDp = groundTruth.Min(p => indexVectors[p].DotProductWith(v));
-
-                            var groundTruthComplete = indexVectors
-                                .Select((v2, i) => (v2, i))
-                                .Where(p => v.DotProductWith(p.v2) >= smDp-0.001f)
-                                .Select(p => p.i)
-                                .ToArray();
-
-
-
-                            var res = db.GetKNearestVectors(v, k).ToArray();
-                            Trace.WriteLine($"k {k}: {res.Length} / {groundTruth.Length}");
-                            Assert.AreEqual(groundTruth.Length, res.Length);
-                            Assert.AreEqual(res.Length, res.Select(p => p.id).Intersect(groundTruthComplete).Count());
-
-                            if (k != 1) continue;
-
-                            var (k1res, k1dp) = db.GetNearestVector(v);
-                            if (v.Length == 0)
-                                Assert.AreEqual(-1, k1res);
-                            else
-                            {
-                                Assert.AreEqual(v.DotProductWith(db.GetVectorById(k1res)), k1dp, 0.0001f);
-                                Assert.AreEqual(smDp, k1dp, 0.0001f);
-                            }
-                        }
-                        Trace.WriteLine("");
-                    }
+                    PerformKNearestNeighborsTest(db, queryVectors, indexVectors);
                 }
             }
             finally
@@ -203,9 +193,97 @@ namespace ESPkMeansLib.Tests.Helpers
                 if (File.Exists(tmpFn))
                     File.Delete(tmpFn);
             }
+        }
+
+        [TestMethod]
+        public void GetKNearestNeighborsWordVectorsTest()
+        {
+            var (queryVectors, indexVectors) = GetWordVectors();
+            var db = new DotProductIndexedVectors();
+            db.Set(indexVectors);
+            PerformKNearestNeighborsTest(db, queryVectors, indexVectors);
+        }
 
 
+        private static void PerformKNearestNeighborsTest(DotProductIndexedVectors db, List<FlexibleVector> queryVectors,
+            FlexibleVector[] indexVectors)
+        {
+            var thresholds = new[] { 0, 1, 3, 5, 8, 11, 20, 100, 10_000 };
+            Parallel.For(0, queryVectors.Count, r =>
+            {
+                var v = queryVectors[r];
+                var indexVectorsDotProducts = new float[indexVectors.Length];
+                var indexVectorsKeys = Enumerable.Range(0, indexVectors.Length).ToArray();
+                for (int i = 0; i < indexVectors.Length; i++)
+                {
+                    indexVectorsDotProducts[i] = indexVectors[i].DotProductWith(v);
+                }
+                Array.Sort(indexVectorsDotProducts, indexVectorsKeys);
+                Array.Reverse(indexVectorsDotProducts);
+                Array.Reverse(indexVectorsKeys);
+                foreach (var k in thresholds)
+                {
+                    if (v.Length == 0 || k == 0)
+                    {
+                        Assert.AreEqual(0, db.GetKNearestVectors(v, k).Count);
+                        continue;
+                    }
 
+                    var groundTruthLen = k;
+                    var minGroundTruthLen = k;
+                    var minDotProductInGroundTruth = indexVectorsDotProducts[k - 1];
+                    for (int i = 0; i < indexVectorsDotProducts.Length && i < k; i++)
+                    {
+                        var dp = indexVectorsDotProducts[i];
+                        if (minGroundTruthLen == k && dp <= 0.0001f) //due to rounding errors we might not catch "near" neighbors that still have very low dot product
+                            minGroundTruthLen = i;
+                        if (dp <= 0)
+                        {
+                            groundTruthLen = i;
+                            minDotProductInGroundTruth = i == 0 ? 0 : indexVectorsDotProducts[i - 1];
+                            break;
+                        }
+                    }
+                    if (groundTruthLen == 0)
+                    {
+                        Assert.AreEqual(0, db.GetKNearestVectors(v, k).Count(p => p.dotProduct > 0));
+                        continue;
+                    }
+
+                    var groundTruthComplete = new HashSet<int>(indexVectorsKeys[..groundTruthLen]);
+
+                    for (int i = groundTruthLen; i < indexVectorsDotProducts.Length; i++)
+                    {
+                        var dp = indexVectorsDotProducts[i];
+                        if (dp < 0 || dp < minDotProductInGroundTruth - 0.001f)
+                            break;
+                        groundTruthComplete.Add(indexVectorsKeys[i]);
+
+                    }
+
+                    var res = db.GetKNearestVectors(v, k).ToArray();
+                    //Trace.WriteLine($"k {k}: {res.Length} / {groundTruth.Length}");
+                    Assert.IsTrue(res.Length >= minGroundTruthLen && res.Length <= groundTruthLen,
+                        $"groundTruth len ({minGroundTruthLen} to {groundTruthLen}) and res.Length ({res.Length}) mismatch, min dp {minDotProductInGroundTruth}");
+
+                    Assert.AreEqual(res.Length, res.Count(p => groundTruthComplete.Contains(p.id)),
+                        $"not all expected nearest neighbors found, min dp {minDotProductInGroundTruth}");
+
+                    if (k != 1) continue;
+
+                    var (k1res, k1dp) = db.GetNearestVector(v);
+                    if (v.Length == 0)
+                        Assert.AreEqual(-1, k1res);
+                    else
+                    {
+                        Assert.AreEqual(v.DotProductWith(db.GetVectorById(k1res)), k1dp, 0.0001f,
+                            "GetNearestNeighbor did not return right vector");
+                        Assert.AreEqual(minDotProductInGroundTruth, k1dp, 0.0001f, "GetNearestNeighbor calculated wrong dot product");
+                    }
+                }
+
+                //Trace.WriteLine("");
+            });
         }
 
         [TestMethod]
@@ -230,14 +308,14 @@ namespace ESPkMeansLib.Tests.Helpers
             var watch = Stopwatch.StartNew();
             var set = TestSet.LoadArxiv100K();
             Trace.WriteLine($"{watch.Elapsed} data loaded");
-            watch.Restart();            
+            watch.Restart();
             var clustering = new int[set.Data!.Length];
             var rnd = new Random();
             for (int i = 0; i < clustering.Length; i++)
                 clustering[i] = rnd.Next(numClusters);
             Trace.WriteLine($"{watch.Elapsed} clustering set");
             watch.Restart();
-            var kMeans = new KMeans { UseSphericalKMeans = true, UseKMeansPlusPlusInitialization = false};
+            var kMeans = new KMeans { UseSphericalKMeans = true, UseKMeansPlusPlusInitialization = false };
             //var (means, _) = MeanCalculations.GetMeans(set.Data, numClusters, clustering, true);
             var (_, means) = kMeans.Cluster(set.Data, numClusters);
             Trace.WriteLine($"{watch.Elapsed} means computed");
@@ -279,7 +357,7 @@ namespace ESPkMeansLib.Tests.Helpers
 
             for (int i = 1000; i < 2000; i++)
             {
-                var vec = set.Data[i]; 
+                var vec = set.Data[i];
                 db.GetKNearestVectors(vec, 10);
             }
             watch.Stop();
@@ -324,7 +402,7 @@ namespace ESPkMeansLib.Tests.Helpers
 
             Trace.WriteLine($"{watch.Elapsed} Get30NearestVectors");
             watch.Restart();
-            
+
             for (int i = 300; i < 400; i++)
             {
                 var vec = means[i];

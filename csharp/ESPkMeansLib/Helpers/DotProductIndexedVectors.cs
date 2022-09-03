@@ -893,12 +893,12 @@ namespace ESPkMeansLib.Helpers
                 {
                     //insert curVal at index and move others one down the list = move element at pos k to i so that
                     //we only need to move some values at the top
+                    //array bounds check does not have measurable impact on run time
                     list[i] = list[k];
                     for (int j = k - 1; j >= index; j--)
                     {
                         list[j + 1] = list[j];
                     }
-
                     list[index] = curVal;
                 }
             }

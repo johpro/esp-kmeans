@@ -296,7 +296,12 @@ namespace ESPkMeansLib.Tests.Helpers
             var watch = Stopwatch.StartNew();
             db = new DotProductIndexedVectors();
             db.Set(set);
-            Trace.WriteLine($"{watch.Elapsed} default"); watch.Restart();
+            Trace.WriteLine($"{watch.Elapsed} random vecs"); watch.Restart();
+            set = FlexibleVector.ArrayFromFile("datasets/wordvectors.bin.gz");
+            watch.Restart(); db = new DotProductIndexedVectors();
+            db.Set(set);
+            Trace.WriteLine($"{watch.Elapsed} word vecs"); watch.Restart();
+
         }
 
 

@@ -12,6 +12,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using ElskeLib;
 using ESPkMeansLib.Helpers;
 using ESPkMeansLib.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -726,6 +727,27 @@ namespace ESPkMeansLib.Tests.Model
                 v2 = FlexibleVector.FromJson(json);
                 Assert.IsTrue(v.ValueEquals(v2));
             }
+        }
+
+
+        [TestMethod]
+        public void DotProductPerformanceTest()
+        {
+            var vectors = FlexibleVector.ArrayFromFile("datasets/wordvectors.bin.gz");
+            vectors.Shuffle();
+            var sw = Stopwatch.StartNew();
+
+            var sum = 0d;
+            foreach (var v in vectors)
+            {
+                for (var i = 0; i < 1_000; i++)
+                {
+                    var v2 = vectors[i];
+                    sum += v.DotProductWith(v2);
+                }
+            }
+            sw.Stop();
+            Trace.WriteLine($"{sw.Elapsed} for dot product, sum = {sum}");
         }
         
     }

@@ -468,7 +468,6 @@ namespace ESPkMeansLib.Model
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
         private ref float TryGetValue(int idx)
         {
-            int pos;
             var indexes = _indexes;
             if (indexes == null)
             {
@@ -481,99 +480,63 @@ namespace ESPkMeansLib.Model
                 case 0:
                     goto NOT_FOUND;
                 case 1:
-                    pos = 0;
-                    if (indexes.DangerousGetReferenceAt(pos) != idx)
+                    if (indexes.DangerousGetReferenceAt(0) != idx)
                     {
                         goto NOT_FOUND;
                     }
-                    goto FOUND;
+                    return ref _values.DangerousGetReferenceAt(0);
             }
+
+            return ref TryGetValueHashed(idx, ref _buckets[0], ref _entries[0], ref indexes[0], ref _values[0]);
+
+        NOT_FOUND:
+            return ref Unsafe.NullRef<float>();
+        }
+        
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization |MethodImplOptions.AggressiveInlining)]
+        private ref float TryGetValueHashed(int idx, ref int bucketsPtr, ref int entriesPtr,
+            ref int indexesPtr, ref float valuesPtr)
+        {
             var mod = HashHelpers.FastMod((uint)idx, (uint)_buckets.Length, _fastModMult);
             //remove bounds check, we already know that mod can never exceed size of _buckets
             //and _buckets is never null
-            var entriesIdx = _buckets.DangerousGetReferenceAt((int)mod);
+            var entriesIdx = Unsafe.Add(ref bucketsPtr, (int)mod);
             if (entriesIdx == 0)
             {
                 goto NOT_FOUND;
             }
 
-
+            int pos;
             if (entriesIdx < 0)
             {
                 //position in array already encoded in entriesIdx as complement
                 pos = ~entriesIdx;
-                if (indexes.DangerousGetReferenceAt(pos) != idx)
+                if (Unsafe.Add(ref indexesPtr, pos) != idx)
                 {
                     goto NOT_FOUND;
                 }
                 goto FOUND;
             }
+            
+            ref var ptrToHeader = ref Unsafe.Add(ref entriesPtr, entriesIdx);
+            ref var ptr = ref Unsafe.Add(ref ptrToHeader, 1);
+            ref var endPtr = ref Unsafe.Add(ref ptr, ptrToHeader);
 
-            fixed (int* indexesPtr = indexes)
-            fixed (int* entriesPtr = _entries)
+            while(Unsafe.IsAddressLessThan(ref ptr, ref endPtr))
             {
-                var ptrToHeader = entriesPtr + entriesIdx;
-                var ptr = ptrToHeader + 1;
-                var endPtr = ptr + *ptrToHeader;
-
-                for (; ptr < endPtr; ptr++)
-                {
-                    pos = *ptr;
-                    if (indexesPtr[pos] != idx) continue;
+                pos = ptr;
+                if (Unsafe.Add(ref indexesPtr, pos) == idx)
                     goto FOUND;
-                }
+                ptr = ref Unsafe.Add(ref ptr, 1);
             }
 
         NOT_FOUND:
             return ref Unsafe.NullRef<float>();
 
         FOUND:
-            return ref _values.DangerousGetReferenceAt(pos);
-        }
+            return ref Unsafe.Add(ref valuesPtr, pos);
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private static bool TryGetValue(int idx, int* buckets, int* indexes, int* entries, float* values,
-            uint bucketsLen, ulong fastModMul, out float val)
-        {
-            //if (bucketsLen == 0)
-            //    throw new InvalidOperationException("length of buckets must be greater than zero");
-            int pos;
-            var mod = HashHelpers.FastMod((uint)idx, bucketsLen, fastModMul);
-            var entriesIdx = buckets[mod];
-            switch (entriesIdx)
-            {
-                case 0:
-                    goto NOT_FOUND;
-                case < 0:
-                    {
-                        //position in array already encoded in entriesIdx as complement
-                        pos = ~entriesIdx;
-                        if (*(indexes + pos) != idx)
-                        {
-                            goto NOT_FOUND;
-                        }
-                        goto FOUND;
-                    }
-            }
-
-            var ptrToHeader = entries + entriesIdx;
-            var ptr = ptrToHeader + 1;
-            var endPtr = ptr + *ptrToHeader;
-
-            for (; ptr < endPtr; ptr++)
-            {
-                pos = *ptr;
-                if (*(indexes + pos) == idx)
-                    goto FOUND;
-            }
-
-        NOT_FOUND:
-            val = default;
-            return false;
-
-        FOUND:
-            val = *(values + pos);
-            return true;
         }
 
 
@@ -1069,36 +1032,36 @@ namespace ESPkMeansLib.Model
             var aArr = _indexes;
             if (aArr!.Length == 0)
                 return 0;
-            //we need this switch as we must not call pointer-based TryGetValue overload if bucket size is 0
+            //we need this switch as we must not call pointer-based TryGetValueHashed overload if bucket size is 0
             switch (other.Indexes.Length)
             {
                 case 0:
                     return 0;
                 case 1:
-                    //aArr must also have exactly length 1
+                    //aArr must also have exactly length 1 since this method was called so that other is bigger or same-sized vector
                     if (other.Indexes[0] != aArr[0])
                         return 0;
                     return _values.DangerousGetReferenceAt(0) * other._values.DangerousGetReferenceAt(0);
             }
 
-            double sumAb = 0.0;
-            var fastModMul = other._fastModMult;
-            var bucketsLen = (uint)other._buckets.Length;
-            if (bucketsLen == 0)
+            if (other._buckets.Length == 0)
                 throw new InvalidOperationException("length of buckets must be greater than zero");
+            double sumAb = 0.0;
 
-            fixed (float* valuesPtr = _values, otherValuesPtr = other._values)
-            fixed (int* otherBuckets = other._buckets, otherIndexes = other._indexes,
-                otherEntries = other._entries)
-                for (var a = 0; a < aArr.Length; a++)
-                {
-                    var aIdx = aArr[a];
-                    if (!TryGetValue(aIdx, otherBuckets, otherIndexes, otherEntries, otherValuesPtr,
-                        bucketsLen, fastModMul, out var otherVal))
-                        continue;
-                    sumAb += valuesPtr[a] * otherVal;
-                }
-
+            ref var valuesPtr = ref _values.DangerousGetReferenceAt(0);
+            ref var otherValuesPtr = ref other._values[0];
+            ref var otherIndexesPtr = ref other._indexes![0];
+            ref var otherBucketsPtr = ref other._buckets[0];
+            ref var otherEntriesPtr = ref other._entries[0];
+            for (var a = 0; a < aArr.Length; a++)
+            {
+                var aIdx = aArr[a];
+                ref var otherVal = ref other.TryGetValueHashed(aIdx, ref otherBucketsPtr, ref otherEntriesPtr,
+                    ref otherIndexesPtr, ref otherValuesPtr);
+                if (Unsafe.IsNullRef(ref otherVal))
+                    continue;
+                sumAb += Unsafe.Add(ref valuesPtr, a) * otherVal;
+            }
             return (float)sumAb;
         }
 

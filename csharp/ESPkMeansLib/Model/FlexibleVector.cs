@@ -1593,12 +1593,12 @@ namespace ESPkMeansLib.Model
             const int numVals = 3;
             if (_indexes == null)
             {
-                //is sparse
+                //is dense
                 return _values.Length <= 2 * numVals
                     ? $"[{ValuesToString(_values)}]"
                     : $"[{ValuesToString(_values.Take(numVals))}, ... , {ValuesToString(_values.Skip(_values.Length - numVals))}]";
             }
-            //is dense
+            //is sparse
             return _values.Length <= 2 * numVals
                 ? $"[{ValuesToString(AsEnumerable())}]"
                 : $"[{ValuesToString(AsEnumerable().Take(numVals))}, ... , {ValuesToString(_indexes.Skip(_values.Length - numVals).Zip(_values.Skip(_values.Length - numVals)))}]";

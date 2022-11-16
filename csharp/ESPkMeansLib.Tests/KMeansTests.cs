@@ -13,6 +13,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using ElskeLib.Model;
 using ElskeLib.Utils;
 using ESPkMeansLib.Helpers;
 using ESPkMeansLib.Model;
@@ -70,7 +71,7 @@ namespace ESPkMeansLib.Tests
             Trace.WriteLine("\r\n");
             for (int i = 0; i < centroids.Length; i++)
             {
-                Trace.WriteLine($"CLUSTER {i} | {clusterCounts[i]} items | {GetClusterDescription(centroids[i], elske)}");
+                Trace.WriteLine($"CLUSTER {i} | {clusterCounts[i]} items | {GetClusterDescription(centroids[i], elske.ReferenceIdxMap)}");
             }
 
         }
@@ -153,7 +154,7 @@ namespace ESPkMeansLib.Tests
             var counts = KMeans.GetClusterCounts(clustering, centroids.Length);
             var elske = KeyphraseExtractor.FromFile("datasets/arxiv_100k.elske");
             Trace.WriteLine("elske loaded");
-            var descriptions = centroids.Select(c => GetClusterDescription(c, elske, false)).ToArray();
+            var descriptions = centroids.Select(c => GetClusterDescription(c, elske.ReferenceIdxMap, false)).ToArray();
 
             var db = new DotProductIndexedVectors();
             db.Set(centroids);
@@ -284,7 +285,7 @@ namespace ESPkMeansLib.Tests
              */
         }
 
-        private static string GetClusterDescription(FlexibleVector centroid, KeyphraseExtractor elske, bool includeWeights = true)
+        internal static string GetClusterDescription(FlexibleVector centroid, WordIdxMap idxMap, bool includeWeights = true)
         {
             if (centroid.Length == 0)
                 return "";
@@ -296,7 +297,7 @@ namespace ESPkMeansLib.Tests
             {
                 var idx = indexes[^i];
                 var val = values[^i];
-                var token = elske.ReferenceIdxMap.GetToken(idx);
+                var token = idxMap.GetToken(idx);
                 if (sb.Length > 0)
                     sb.Append(", ");
                 sb.Append(includeWeights ? $"{token} ({val})" : token);

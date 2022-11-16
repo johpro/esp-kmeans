@@ -353,7 +353,6 @@ namespace ESPkMeansLib.Tests.Helpers
 
             Trace.WriteLine($"{watch.Elapsed} GetNearestVector");
             watch.Restart();
-
             for (int i = 100; i < 200; i++)
             {
                 var vec = means[i];
@@ -381,7 +380,8 @@ namespace ESPkMeansLib.Tests.Helpers
                 }
             }
 
-            Trace.WriteLine($"{watch.Elapsed} Get10NearestVectors");
+            var el = watch.Elapsed;
+            Trace.WriteLine($"{el} Get10NearestVectors");
             watch.Restart();
 
             for (int i = 200; i < 300; i++)
@@ -390,6 +390,7 @@ namespace ESPkMeansLib.Tests.Helpers
                 db.GetKNearestVectors(vec, 30);
             }
             watch.Stop();
+            
             for (int i = 280; i < 300; i++)
             {
                 var vec = means[i];
@@ -404,7 +405,6 @@ namespace ESPkMeansLib.Tests.Helpers
                     Assert.IsTrue(list.Any(it => it.id == idx));
                 }
             }
-
             Trace.WriteLine($"{watch.Elapsed} Get30NearestVectors");
             watch.Restart();
 
@@ -483,6 +483,19 @@ namespace ESPkMeansLib.Tests.Helpers
 
             Trace.WriteLine($"{watch.Elapsed} GetNearbyVectors 0.3 with {count} results");
             watch.Restart();
+
+
+            count = 0;
+            for (int i = 600; i < 700; i++)
+            {
+                var vec = means[i];
+                count += db.GetNearbyVectors(vec, 0.6f).Count;
+            }
+            watch.Stop();
+
+            Trace.WriteLine($"{watch.Elapsed} GetNearbyVectors 0.6 with {count/100d:f1} results");
+            watch.Restart();
+
 
         }
 

@@ -8,6 +8,7 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.SymbolStore;
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -43,7 +44,7 @@ namespace ESPkMeansLib.Helpers
         private volatile bool _wasChanged = false;
         private volatile bool _allEntriesAreNonNegative = true;
         private volatile float _maxDpOffsetValue = MaxDpOffsetDefaultValue;
-        private const float MaxDpOffsetDefaultValue = 0.3f;
+        private const float MaxDpOffsetDefaultValue = 0.1f;
 
         public DotProductIndexedVectors()
         {
@@ -158,9 +159,9 @@ namespace ESPkMeansLib.Helpers
         /// </summary>
         private void UpdateTokenMaxValueMap()
         {
-            var th1 = Math.Max(10, VectorsCount / 40);
-            var th2 = Math.Max(10, VectorsCount / 200);
-            var th3 = Math.Max(10, VectorsCount / 500);
+            var th1 = Math.Max(20, VectorsCount / 40);
+            var th2 = Math.Max(20, VectorsCount / 100);
+            var th3 = Math.Max(20, VectorsCount / 500);
             _maxListSizeFirstRun = th1;
 
             var lists = _tokenToVectorsMap.EntryLists.ToArray();
@@ -206,25 +207,19 @@ namespace ESPkMeansLib.Helpers
 
             //check whether our default value for our long-list-avoiding shortcut is suitable
             var maxVal = 0f;
-            var avgVal = 0f;
-            var listCount = 0;
             foreach (var list in lists)
             {
-                if(list == null || list.Count <= _maxListSizeFirstRun)
+                if (list == null || list.Count <= _maxListSizeFirstRun)
                     continue;
                 maxVal = Math.Max(maxVal, Math.Abs(list[0].tokenVal));
-                avgVal += Math.Abs(list[8].tokenVal);
-                listCount++;
             }
-            
             if (maxVal <= 1.1f)
             {
                 _maxDpOffsetValue = MaxDpOffsetDefaultValue;
             }
             else
             {
-                avgVal /= lists.Length;
-                _maxDpOffsetValue = Math.Max(MaxDpOffsetDefaultValue, avgVal * avgVal * 3);
+                _maxDpOffsetValue = Math.Max(MaxDpOffsetDefaultValue, maxVal * maxVal * 3);
             }
 
             _wasChanged = false;
@@ -331,7 +326,7 @@ namespace ESPkMeansLib.Helpers
                 if (_skippedListsBag.TryTake(out var skippedLists))
                     skippedLists.Clear();
                 else
-                    skippedLists = new List<(int token, float val, IList<(int id, float val)> list)>();
+                    skippedLists = new();
                 try
                 {
                     var isHardTh = minDotProduct > 0.04f;
@@ -366,7 +361,6 @@ namespace ESPkMeansLib.Helpers
                     var bestId = -1;
                     var bestDp = float.MinValue;
 
-
                     foreach (var p in dict)
                     {
                         if (p.Value < dpThreshold)
@@ -382,7 +376,6 @@ namespace ESPkMeansLib.Helpers
                             {
                                 if (!vec.TryGetValue(token, out var vecVal))
                                     continue;
-
                                 //first 8 values have already been considered
                                 if (list[7].id == id ||
                                     list[0].id == id ||
@@ -393,6 +386,7 @@ namespace ESPkMeansLib.Helpers
                                     list[5].id == id ||
                                     list[6].id == id)
                                     continue;
+
                                 dp += val * vecVal;
                             }
                         }
@@ -531,7 +525,6 @@ namespace ESPkMeansLib.Helpers
             }
         }
 
-
         /// <summary>
         /// Retrieve k nearest neighbors from index (can be fewer than k), sorted in descending order of similarity.
         /// Neighbors must have dot product > 0 due to the inner workings of this indexing structure.
@@ -555,19 +548,22 @@ namespace ESPkMeansLib.Helpers
                 if (_skippedListsBag.TryTake(out var skippedLists))
                     skippedLists.Clear();
                 else
-                    skippedLists = new List<(int token, float val, IList<(int id, float val)> list)>();
+                    skippedLists = new();
                 try
                 {
-
                     var resList = new List<(int id, float dotProduct)>(k + 1);
                     var len = GetNearestVectorsCandidates(k, vector, skippedLists, dict,
                         ref dpIncrementOffset, _maxDpOffsetValue);
 
+
                     if (len == 0)
                         return resList;
 
-                    if (dict.Count > k)
+
+
+                    if (dict.Count > k && skippedLists.Count > 0)
                     {
+                        //top-k value negligible time
                         var topKDotProduct = GetTopKValue(dict.Values, k, out _);
                         //we only need to look at vectors in dict that have dot product geq the following threshold
                         //since any other vector cannot make the top-k cut in the end
@@ -576,26 +572,6 @@ namespace ESPkMeansLib.Helpers
                         {
                             if (p.Value >= dpThreshold)
                                 resList.Add((p.Key, p.Value));
-                        }
-
-                        if (skippedLists.Count > 0 && skippedLists.Sum(t => t.list.Count)
-                            < resList.Count * skippedLists.Count * 3)
-                        {
-                            //threshold did not lead to significant narrowing of results, cheaper to 
-                            //directly add skipped lists
-                            foreach ((_, float tokenVal, IList<(int id, float val)> list) in skippedLists)
-                            {
-                                AddTokenValListToDictionary(dict, tokenVal, list, 8);
-                            }
-
-                            skippedLists.Clear();
-                            dpIncrementOffset = 0;
-                            resList.Clear();
-                            resList.EnsureCapacity(dict.Count);
-                            foreach (var p in dict)
-                            {
-                                resList.Add((p.Key, p.Value));
-                            }
                         }
                     }
                     else
@@ -610,9 +586,11 @@ namespace ESPkMeansLib.Helpers
                     if (skippedLists.Count != 0)
                     {
                         CompleteDotProductsOfSkippedTokens(resList, skippedLists);
+
                     }
 
                     resList.Sort(DpResultComparator.Default);
+
                     var toRemoveIdx = 0;
                     for (; toRemoveIdx < resList.Count && toRemoveIdx < k; toRemoveIdx++)
                     {
@@ -621,6 +599,7 @@ namespace ESPkMeansLib.Helpers
                     }
                     if (toRemoveIdx < resList.Count)
                         resList.RemoveRange(toRemoveIdx, resList.Count - toRemoveIdx);
+
 
                     return resList;
                 }
@@ -633,13 +612,13 @@ namespace ESPkMeansLib.Helpers
             }
             finally
             {
-
                 _intFloatDictionaryBag.Add(dict);
             }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining)]
-        private void CompleteDotProductsOfSkippedTokens(List<(int id, float dotProduct)> resList, List<(int token, float val, IList<(int id, float val)> list)> skippedLists)
+        private void CompleteDotProductsOfSkippedTokens(List<(int id, float dotProduct)> resList,
+            List<(int token, float val, IList<(int id, float val)> list)> skippedLists)
         {
             //we need to complete the dot product calculations for the final candidates
             for (int i = 0; i < resList.Count; i++)
@@ -679,13 +658,17 @@ namespace ESPkMeansLib.Helpers
                 throw new Exception("AVX vector size mismatch");
 
             if (count < 0)
+            {
                 count = list.Count - offset;
+            }
+
             var j = offset;
-            var endLimit = offset + count;
+            var endLimit = Math.Min(list.Count, offset + count);
+            count = endLimit - j;
             if (Avx.IsSupported && count >= vecSize)
             {
                 //important that dict won't resize between reference retrieval
-                dict.EnsureCapacity(count+dict.Count);
+                dict.EnsureCapacity(count + dict.Count);
                 var limit = endLimit - vecSize;
                 var valVec = Vector256.Create(val);
                 for (; j <= limit; j += vecSize)
@@ -712,7 +695,7 @@ namespace ESPkMeansLib.Helpers
                     ref var dictRef5 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id5, out _);
                     ref var dictRef6 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id6, out _);
                     ref var dictRef7 = ref CollectionsMarshal.GetValueRefOrAddDefault(dict, id7, out _);
-                    
+
 
                     var existingSums = Vector256.Create(dictRef0, dictRef1, dictRef2, dictRef3, dictRef4,
                         dictRef5, dictRef6, dictRef7);
@@ -726,7 +709,7 @@ namespace ESPkMeansLib.Helpers
                         var mul = Avx.Multiply(valVec, tokenValVec);
                         existingSums = Avx.Add(existingSums, mul);
                     }
-                    
+
                     dictRef0 = existingSums.GetElement(0);
                     dictRef1 = existingSums.GetElement(1);
                     dictRef2 = existingSums.GetElement(2);
@@ -744,7 +727,7 @@ namespace ESPkMeansLib.Helpers
                 dict.AddToItem(id, tokenVal * val);
             }
         }
-
+        
 
         /// <summary>
         /// Go through non-zero entries of query vector and retrieve all indexed vectors that have at least one
@@ -766,7 +749,6 @@ namespace ESPkMeansLib.Helpers
         private int GetNearestVectorsCandidates(int k, FlexibleVector vector, List<(int token, float val, IList<(int id, float val)> list)> skippedLists,
         Dictionary<int, float> dict, ref float dpIncrementOffset, float maxDpIncrementOffset, bool isHardThreshold = false)
         {
-
             var indexes = vector.Indexes;
             var values = vector.Values;
             var tokenLists = ArrayPool<(int token, float val, IList<(int id, float val)> list)>
@@ -785,49 +767,52 @@ namespace ESPkMeansLib.Helpers
                         continue;
 
                     var val = values[i];
+                    if (!_allEntriesAreNonNegative || list.Count <= _maxListSizeFirstRun)
+                    {
+                        AddTokenValListToDictionary(dict, val, list);
+                        continue;
+                    }
+                    //save list for later which we then process in sorted order
                     tokenLists[numLists] = (idx, val, list);
                     numLists++;
                 }
 
                 if (numLists == 0)
-                    return 0;
+                    return Math.Min(dict.Count, k); //all tokens and targets already processed
                 //sort lists in descending order of their size so that we have high chance to skip the longest ones
                 Array.Sort(tokenLists, 0, numLists, TokenListComparator.Default);
 
                 for (int i = 0; i < numLists; i++)
                 {
                     var (idx, val, list) = tokenLists[i];
-                    if (list.Count > _maxListSizeFirstRun)
+                    //skip most parts of long lists for now.
+                    //first 9 items are highest values and sorted in descending order.
+                    //we apply the first 8 items and compute the upper bound of the product for
+                    //the remaining ones based on the 9th item (given that this upper bound does not
+                    //lead to higher total dot product deviation than allowed)
+
+
+                    var maxTokenVal = list[8].val;
+                    var maxDpIncrement = val * maxTokenVal;
+                    var newOffset = dpIncrementOffset + maxDpIncrement;
+
+                    if (newOffset < maxDpIncrementOffset)
                     {
-                        //skip most parts of long lists for now.
-                        //first 9 items are highest values and sorted in descending order.
-                        //we apply the first 8 items and compute the upper bound of the product for
-                        //the remaining ones based on the 9th item (given that this upper bound does not
-                        //lead to higher total dot product deviation than allowed)
-
-                        var maxTokenVal = list[8].val;
-                        var maxDpIncrement = val * maxTokenVal;
-                        var newOffset = dpIncrementOffset + maxDpIncrement;
-
-                        if (newOffset < maxDpIncrementOffset)
-                        {
-                            skippedLists.Add((idx, val, list));
-                            dpIncrementOffset = newOffset;
-
-                            AddTokenValListToDictionary(dict, val, list, 0, 8);
-                            continue;
-                        }
+                        dpIncrementOffset = newOffset;
+                        skippedLists.Add((idx, val, list));
+                        AddTokenValListToDictionary(dict, val, list, 0, 8);
+                        continue;
                     }
-
                     AddTokenValListToDictionary(dict, val, list);
                 }
+
             }
             finally
             {
                 ArrayPool<(int token, float val, IList<(int id, float val)> list)>
                     .Shared.Return(tokenLists, true);
             }
-
+            
 
             var len = Math.Min(dict.Count, k);
             if (isHardThreshold)
@@ -835,11 +820,13 @@ namespace ESPkMeansLib.Helpers
             if (skippedLists.Count == 0) return len;
             //we have to make sure that the resulting dict contains at least the actual top k nearest neighbors
             bool goThroughSkippedLists;
-            if (len < k)
+
+            if (len < k || dict.Count > _indexedVectors.Count / 3 /*we already got too many candidates anyway*/)
                 goThroughSkippedLists = true;
             else
             {
                 var itemsAboveIncrement = 0;
+
                 var th = dpIncrementOffset + 0.001f;
                 foreach (var val in dict.Values)
                 {
@@ -863,8 +850,6 @@ namespace ESPkMeansLib.Helpers
                 skippedLists.Clear();
                 dpIncrementOffset = 0;
             }
-
-
             return len;
         }
 
@@ -1075,7 +1060,7 @@ namespace ESPkMeansLib.Helpers
                 if (_skippedListsBag.TryTake(out var skippedLists))
                     skippedLists.Clear();
                 else
-                    skippedLists = new List<(int token, float val, IList<(int id, float val)> list)>();
+                    skippedLists = new();
                 try
                 {
                     var maxDpIncrement = dpThreshold >= 0.2f

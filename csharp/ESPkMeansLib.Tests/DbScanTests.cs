@@ -10,12 +10,15 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading.Tasks;
 using ElskeLib.Model;
+using ElskeLib.Utils;
 using ESPkMeansLib.Helpers;
 using ESPkMeansLib.Model;
 using ESPkMeansLib.Tests.datasets;
+using ESPkMeansLib.Tests.Helpers;
 
 namespace ESPkMeansLib.Tests
 {
@@ -37,6 +40,27 @@ namespace ESPkMeansLib.Tests
             PrintClustersInfo(set.Data, clustering, clusterCounts, true);
         }
 
+        [TestMethod]
+        public void TwitterClusterTest()
+        {
+            var (data, elske, origData) = LoadTextData("twitter_hampshire");
+            Trace.WriteLine("set loaded.");
+            var set = new TestSet
+            {
+                Data = data
+            };
+            var dbs = new DbScan
+            {
+                MaxDistance = 0.5f,
+                EnableLogging = true
+            };
+
+            var (clustering, clusterCounts, _) = RunClusterTest(set, dbs);
+            Trace.WriteLine("");
+            PrintClustersInfo(set.Data, clustering, clusterCounts, true, elske.ReferenceIdxMap, origData);
+        }
+        
+
         [TestMethod()]
         public void IrisClusterTest()
         {
@@ -54,7 +78,7 @@ namespace ESPkMeansLib.Tests
         }
 
         private static void PrintClustersInfo(FlexibleVector[] data, int[] clustering, int[] clusterCounts,
-            bool useCosine, WordIdxMap? idxMap = null)
+            bool useCosine, WordIdxMap? idxMap = null, string[]? origData = null)
         {
             var noiseCluster = clusterCounts.Length;
             clustering = clustering.ToArray();
@@ -68,12 +92,75 @@ namespace ESPkMeansLib.Tests
             (means, clusterCounts) = MeanCalculations.GetMeans(data, clusterCounts.Length + 1, clustering, useCosine);
             for (int i = 0; i < clusterCounts.Length; i++)
             {
+                var cid = i;
                 var centroid = means[i];
                 var clusterString = idxMap == null ? "" : KMeansTests.GetClusterDescription(centroid, idxMap);
                 Trace.WriteLine($"CLUSTER {i} | {clusterCounts[i]} items | {clusterString} | {centroid}");
+                var bestDist = double.MaxValue;
+                var bestId = -1;
+                var worstDist = double.MinValue;
+                var worstId = -1;
+                Parallel.For(0, data.Length, j =>
+                {
+                    if (clustering[j] != cid)
+                        return;
+                    var vec = data[j];
+                    var dist = useCosine
+                        ? centroid.CosineDistanceWith(vec)
+                        : centroid.SquaredEuclideanDistanceWith(vec);
+                    lock (centroid)
+                    {
+                        if (dist < bestDist)
+                        {
+                            bestDist = dist;
+                            bestId = j;
+                        }
+
+                        if (dist > worstDist)
+                        {
+                            worstDist = dist;
+                            worstId = j;
+                        }
+                    }
+                });
+                Trace.WriteLine($"\tREP: {data[bestId]}");
+                if(origData != null)
+                    Trace.WriteLine($"\tREP Text: {origData[bestId]}");
+                Trace.WriteLine($"\tW REP: {data[worstId]}");
+                if (origData != null)
+                    Trace.WriteLine($"\tW REP Text: {origData[worstId]}");
+                Trace.WriteLine("");
+
             }
 
 
+        }
+
+        internal static (FlexibleVector[] data, KeyphraseExtractor elske, string[] origData) LoadTextData(string name)
+        {
+
+            var fn = $"datasets/{name}.csv.gz";
+            var origData = FileHelper.ReadLines(fn).ToArray();
+            var elske = KeyphraseExtractor.CreateFromDocuments(
+                origData, new ElskeCreationSettings
+                {
+                    BuildReferenceCollection = false,
+                    DoNotCountPairs = true,
+                    IsDebugStopwatchEnabled = true,
+                    TokenizationSettings = new TokenizationSettings
+                    {
+                        ConvertToLowercase = true,
+                        RetainPunctuationCharacters = false,
+                        HtmlDecode = true,
+                        TwitterRemoveRetweetInfo = true,
+                        TwitterRemoveUrls = true,
+                        TwitterRemoveUserMentions = true
+                    }
+                });
+            var data = origData
+                .Select(l => new FlexibleVector(elske.GenerateBoWVector(l, true)))
+                .ToArray();
+            return (data, elske, origData);
         }
 
         private static string DbScanParaString(DbScan dbs)

@@ -346,7 +346,7 @@ namespace ESPkMeansLib.Tests.Helpers
             {
                 var vec = means[i];
                 var (id, dp) = db.GetNearestVector(vec);
-                var target = targets.MaxItem(v => v.DotProductWith(vec));
+                var target = targets.MaxBy(v => v.DotProductWith(vec));
                 Assert.AreEqual(Array.IndexOf(targets, target), id);
                 Assert.AreEqual(target.DotProductWith(vec), dp, 0.0001f);
             }

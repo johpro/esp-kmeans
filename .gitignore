@@ -350,3 +350,4 @@ MigrationBackup/
 .ionide/
 /csharp/ESkMeansLib.Tests/datasets/20news.json.gz
 /csharp/ESPkMeansLib.Tests/datasets/wordvectors.bin.gz
+/csharp/ESPkMeansLib.Tests/datasets/twitter_hampshire.csv.gz
